@@ -26,10 +26,14 @@ Protocol (do exactly this, looping until your contribution lands):
 1. ctx = mesh.read_session('{sid}')  -> note ctx['version'] and ctx['contributions'] (peers).
 2. Form YOUR expert view of ctx['payload'] THROUGH YOUR LENS (below). Read every peer
    contribution; build on / sharpen / respectfully disagree with them — do not just restate.
-3. peers = [c['contrib_id'] for c in ctx['contributions']]
+3. peers = [c['contrib_id'] for c in ctx['contributions']]   # the peers you ACTUALLY read+used
    try: cid = mesh.contribute('{sid}', '<your_role>', '<your contribution>', peers_read=peers, read_version=ctx['version'])
-   except mesh.StaleReadError: GOTO 1 (peers arrived since you read — re-read, incorporate them, retry).
+   except mesh.StaleReadError: GOTO 1 (a peer took your slot — re-read, incorporate them, retry).
 4. Return ONLY: your contrib_id, peers_read count, and your contribution text (concise, dense).
+
+read_version=ctx['version'] is your compare-and-set token (the opener reads an empty session
+-> version 0 -> contributes read_version=0). peers_read is your read-CLAIM: verify_coordination
+flags you if you omit a peer that was present to you, so cite what you genuinely read.
 """
 
 def open_council(topic: str, payload: str, roles: list[str]) -> str:
@@ -39,8 +43,8 @@ def council_report(session_id: str) -> dict:
     s = mesh.read_session(session_id)
     v = mesh.verify_coordination(session_id)
     out = {"session_id": session_id, "topic": s["topic"], "status": s["status"],
-           "verdict": v, "final": s.get("final") if isinstance(s, dict) else None,
-           "transcript": [{"role": c["role"], "reads": len(c["peers_read"] or []),
+           "verdict": v, "final": s.get("final"),
+           "transcript": [{"role": c["role"], "claimed_reads": len(c.get("claimed_peers") or []),
                            "content": c["content"]} for c in s["contributions"]]}
     return out
 

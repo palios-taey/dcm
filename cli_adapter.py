@@ -5,6 +5,13 @@ Per the fleet_integration council finding: CLIs join via hooks wrapping `codex e
 `gemini -p`, and like every adapter funnel through mesh.contribute(read_version) — the
 adapter owns the read+commit so the CLI can't bypass read-before-write. Closes the
 fleet-capability gap (Codex/Gemini-CLI are full peers, not subprocess tools).
+
+SECURITY (honest, per gatekeeper audit): peer contributions are attacker-influenceable text
+and they are injected into the CLI prompt below, while `codex exec` can take real actions on
+the host. The "do NOT edit any files" line in the prompt is advisory ONLY — it is not an
+enforced sandbox. Run CLI experts on councils whose participants you trust, and/or sandbox
+the CLI (containerize, drop fs/network) before seating it on an untrusted-content mesh. This
+is inherent to running an acting agent on shared deliberation; it is documented, not solved.
 """
 from __future__ import annotations
 import os, re, subprocess
