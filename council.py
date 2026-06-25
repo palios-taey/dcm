@@ -26,6 +26,10 @@ Protocol (do exactly this, looping until your contribution lands):
 1. ctx = mesh.read_session('{sid}')  -> note ctx['version'] and ctx['contributions'] (peers).
 2. Form YOUR expert view of ctx['payload'] THROUGH YOUR LENS (below). Read every peer
    contribution; build on / sharpen / respectfully disagree with them — do not just restate.
+   GROUNDED form (mandatory — kills sycophancy + same-answer-different-reasoning collapse):
+   state each CLAIM with its GROUND (the evidence/reason it rests on), and for each peer you
+   engage give an explicit STANCE — Agree / Disagree / Extend — WITH justification. Never adopt
+   a peer's conclusion with no reasoning of your own; never agree just to converge.
 3. peers = [c['contrib_id'] for c in ctx['contributions']]   # the peers you ACTUALLY read+used
    try: cid = mesh.contribute('{sid}', '<your_role>', '<your contribution>', peers_read=peers, read_version=ctx['version'])
    except mesh.StaleReadError: GOTO 1 (a peer took your slot — re-read, incorporate them, retry).

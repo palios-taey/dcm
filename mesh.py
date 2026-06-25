@@ -140,12 +140,16 @@ def contribute(session_id: str, role: str, content: str, peers_read: list[str],
     """Write a contribution against a compare-and-set on the slot you read.
 
     read_version = the `version` you got from read_session (REQUIRED; open a fresh session
-    with read_version=0). Your contribution claims slot `seq = read_version`. The composite
-    uniqueness constraint on (session_id, seq) is the CAS: if a peer already took that slot —
-    i.e. someone committed since you read — your CREATE hits the constraint and is REJECTED
-    with StaleReadError. You then re-read (the slot the peer took is now visible) and redo.
-    This makes the old DCM's fatal failure (commit-into-the-void while siloed) structurally
-    rejected, and unlike the first cut's count-check it actually serializes under concurrency.
+    with read_version=0). It is purely the GATE TOKEN: the write commits only if the live
+    contribution count still equals it (WHERE cnt = $rv), i.e. no peer arrived since you read.
+    The slot `seq` is then derived SERVER-SIDE from that live count — the caller cannot choose
+    it, so a fabricated read_version cannot land a contribution in a future-slot gap (it just
+    fails the gate). The composite uniqueness constraint on (session_id, seq) is the real CAS:
+    if two writers pass the gate at the same version concurrently, both derive the same seq and
+    collide on the constraint — exactly ONE commits, the rest are REJECTED with StaleReadError
+    and must re-read + redo. This makes the old DCM's fatal failure (commit-into-the-void while
+    siloed) structurally rejected, and unlike the first cut's count-check it actually serializes
+    under concurrency (the constraint index lock, not the racy count, is what serializes).
 
     peers_read = the contrib_ids you ACTUALLY read + incorporated. Recorded as `claimed_peers`
     (your self-report; verify_coordination flags you if it omits a peer present to you). The
@@ -158,23 +162,32 @@ def contribute(session_id: str, role: str, content: str, peers_read: list[str],
     cid = f"contrib_{uuid.uuid4().hex[:12]}"
     with _db().session() as s:
         try:
+            # gate: commit only at the version you read (cnt = $rv); slot is SERVER-derived
+            # (seq = cnt), never the caller's value. The (session_id, seq) constraint serializes
+            # concurrent same-version writers — exactly one wins the slot.
             rec = s.run("""MATCH (x:DCMSession {session_id:$sid})
                            OPTIONAL MATCH (c:DCMContribution)-[:IN]->(x)
-                           WITH x, collect(c.contrib_id) AS present
-                           CREATE (n:DCMContribution {contrib_id:$cid, session_id:$sid, seq:$seq,
+                           WITH x, collect(c.contrib_id) AS present, count(c) AS cnt
+                           WHERE cnt = $rv
+                           CREATE (n:DCMContribution {contrib_id:$cid, session_id:$sid, seq:cnt,
                                    role:$role, content:$content,
                                    claimed_peers:$claimed, peers_present:present, created:$ts})-[:IN]->(x)
                            RETURN n.contrib_id AS cid""",
-                        sid=session_id, cid=cid, seq=read_version, role=role, content=content,
-                        claimed=peers_read or [], ts=time.time()).single()
+                        sid=session_id, cid=cid, role=role, content=content,
+                        claimed=peers_read or [], rv=read_version, ts=time.time()).single()
         except ConstraintError:
-            # slot (session_id, read_version) already taken -> a peer committed since you read.
+            # slot already taken -> a peer won this version concurrently. Re-read and redo.
             fresh = read_session(session_id)
             known = set(peers_read or [])
             new_ids = [c["contrib_id"] for c in fresh["contributions"] if c["contrib_id"] not in known]
             raise StaleReadError(fresh["version"], read_version, new_ids)
         if rec is None:
-            raise ValueError(f"no DCM session {session_id}")
+            # gate failed (cnt != read_version: a peer arrived, or read_version is stale/
+            # fabricated) — read_session raises ValueError if the session truly doesn't exist.
+            fresh = read_session(session_id)
+            known = set(peers_read or [])
+            new_ids = [c["contrib_id"] for c in fresh["contributions"] if c["contrib_id"] not in known]
+            raise StaleReadError(fresh["version"], read_version, new_ids)
         return rec["cid"]
 
 

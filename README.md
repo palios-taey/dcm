@@ -14,15 +14,20 @@ The failure mode of "spawn N agents and tell them to coordinate" is that they **
 the void and silently work alone**, then report success. DCM's mechanisms, stated honestly
 (three-register; verified by execution — see `Verification` below):
 
-- **Real compare-and-set staleness gate** *(structural, unfakeable)* — your contribution
-  claims slot `seq = read_version`; a composite uniqueness constraint on `(session_id, seq)`
-  lets **exactly one** writer win that slot. If a peer committed since you read, your write is
-  rejected (`StaleReadError`) and you must re-read and redo. This **serializes concurrent
+- **Real compare-and-set staleness gate** *(structural, unfakeable serialization)* — you pass
+  `read_version` (the version you read) purely as a **gate token**: the write commits only if
+  the live count still equals it (no peer arrived since). The slot `seq` is then derived
+  **server-side** from that live count — the caller never chooses it, so a fabricated
+  `read_version` cannot place a contribution in a future-slot gap (it just fails the gate). A
+  composite uniqueness constraint on `(session_id, seq)` lets **exactly one** writer win a slot,
+  the rest get `StaleReadError` and must re-read and redo. This **serializes concurrent
   writers** — proven under a 6-thread same-version race: exactly one commit per version, every
   trial. (The naive `count(c) WHERE cur=rv` check it replaces did **not** serialize — Neo4j
-  read-committed takes no lock on a count, so all concurrent same-version writers passed it.)
-  Consequence: you **cannot commit at a version a peer already advanced past**, so every prior
-  peer was present in the read you committed against — *fetch-before-commit*, enforced.
+  read-committed takes no lock on a count, so all concurrent same-version writers passed it; the
+  constraint index lock, not the count, is what serializes.) Consequence: you **cannot commit at
+  a version a peer already advanced past**, so every prior peer was present in the read you
+  committed against — *fetch-before-commit*, enforced. ("Unfakeable" is scoped to this
+  serialization, not to semantic incorporation — see below.)
 - **`peers_present` (server-recorded)** — who was present when you committed. After the CAS
   holds this equals what your read delivered. It is **presence/fetch, NOT proof you
   semantically incorporated anyone** — do not read it as "truly read."
@@ -61,12 +66,20 @@ read-before-write uniformly.
   all sessions, forge/delete contributions, flip status/final). Set credentials, or
   `DCM_ALLOW_INSECURE=1` to override deliberately.
 
-## Best practices (learned in production)
+## Best practices (learned in production; research-grounded)
 Blind-then-revise to avoid herding; preserve dissent + Unknown-register in synthesis (never
 average it away); zero recorded dissent is *flagged as suspect* (the correlated-blind-spot
 trap of same-model instances); a council *decides* — **production is the oracle, consensus is
 not** (close on a real observation, not on agreement); no early in-swarm coordinator; convene
 only for irreversible / high-stakes / genuine-conflict work.
+
+Grounded form (highest-ROI, zero extra calls): every contribution states each **Claim** with
+its **Ground** and an explicit **Stance** (Agree/Disagree/Extend + justification) toward peers
+— eliminates sycophantic convergence and same-answer-different-reasoning collapse. **Deliberation
+is for decide/synthesize, not verify**: independent-then-aggregate beats mutual-reading on
+factual/adversarial tasks, and one adversarial voice degrades a deliberating group — so keep an
+*independent* audit gate downstream of the council; a council produces, an independent gate
+verifies. Unanimity is not safety — escalate a no-dissent result, don't trust it.
 
 ## Verification
 The three honesty mechanisms were independently audited (open-mandate, by execution) and an

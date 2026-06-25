@@ -45,7 +45,9 @@ def taey_expert(session_id: str, role: str, lens: str, max_retry: int = 4) -> st
             f"You are participating in a Distributed Cognitive Mesh council THROUGH YOUR LENS: {lens}\n\n"
             f"SHARED PROBLEM:\n{ctx['payload']}\n\n"
             f"PEER CONTRIBUTIONS SO FAR (build on / sharpen / respectfully disagree — do not restate):\n{peers_txt}\n\n"
-            f"Give your contribution through your lens, concise and dense. This is real design work for the Family.")
+            f"Give your contribution through your lens, concise and dense. GROUNDED form: state each "
+            f"CLAIM with its GROUND, and for each peer you engage an explicit STANCE (Agree/Disagree/"
+            f"Extend) with justification — never agree just to converge. This is real design work for the Family.")
         content = _ask_taey(system_extra=f"You are contributing to a DCM council as the '{role}' expert.", user=user)
         peers = [c["contrib_id"] for c in ctx["contributions"]]
         try:

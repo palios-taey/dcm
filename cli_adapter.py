@@ -43,7 +43,9 @@ def cli_expert(session_id: str, role: str, lens: str, cli: str = "codex", max_re
             f"You are a DCM (Distributed Cognitive Mesh) council expert. LENS: {lens}\n\n"
             f"SHARED PROBLEM:\n{ctx['payload']}\n\n"
             f"PEER CONTRIBUTIONS (build on / sharpen / disagree — do NOT restate, do NOT edit any files):\n{peers_txt}\n\n"
-            f"Output ONLY your contribution text through your lens — concise, dense, additive.")
+            f"Output ONLY your contribution text through your lens — concise, dense, additive. GROUNDED form: "
+            f"each CLAIM with its GROUND, and an explicit STANCE (Agree/Disagree/Extend) with justification "
+            f"for each peer you engage — never agree just to converge.")
         content = run(prompt)
         peers = [c["contrib_id"] for c in ctx["contributions"]]
         try:
