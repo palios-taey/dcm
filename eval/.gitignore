@@ -1,0 +1,16 @@
+.venv/
+.venv_live/
+runs/
+logs/
+*.log
+smoke_*
+*.patch
+*_pred.json
+# swebench harness report outputs (<model>.<run_id>.json) — keep only the frozen subsets + code
+*.json
+!frozen_subset.json
+!frozen_subset_v2.json
+!hard_subset.json
+!live_subset.json
+!oracle_subset.json
+!sabotage_fixtures.json
