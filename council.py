@@ -1,10 +1,10 @@
 """DCM council runtime.
 
-The public entry point is council_review(task, artifact, rules, roster=None). It seats the
-converged expert mix from eval/arms.py on the mesh, runs a sealed blind review round, reveals
-the typed concern ledger, records typed resolutions for block concerns, and publishes a final
-only through mesh.publish_final(). The clerk here is deterministic and non-voting: it can route,
-parse, summarize, and fail closed, but it cannot approve or overrule an open block concern.
+The public entry points are council_review(task, artifact, rules, roster=None) and
+council_plan(problem, rules, roster=None). They seat the converged expert mix from eval/arms.py
+on the mesh, preserve blind-then-reveal discipline, and publish finals only through
+mesh.publish_final(). The clerk here is deterministic and non-voting: it can route, parse,
+summarize, and fail closed, but it cannot approve or overrule an open block concern.
 """
 from __future__ import annotations
 import ast
@@ -52,6 +52,28 @@ _ROLE_ALLOWED_CLIS = {
 _RESOLUTION_DISPOSITIONS = {"FIX-VERIFIED", "FALSE-POSITIVE", "OUT-OF-SCOPE", "ESCALATE"}
 _EVIDENCE_REQUIRED = {"FIX-VERIFIED", "FALSE-POSITIVE"}
 _CLASSIFICATIONS = {"ALLOWED_RESCAN", "BANNED_SETTLE_POLL", "UNKNOWN"}
+_PLAN_ROLE_CONTRACTS = {
+    "foundation": (
+        "FOUNDATION PLANNING DUTY: identify prior solutions, docs, repo history, and existing "
+        "utilities to reuse. Recover-don't-re-derive; name the concrete files/docs/history the "
+        "implementation should start from."
+    ),
+    "ground-runner": (
+        "GROUND-RUNNER PLANNING DUTY: define how the implementation will be proven against "
+        "reality, including real-consult execution, raw screenshot evidence, clipboard/report "
+        "capture, syntax gates, and the exact failure stop conditions."
+    ),
+    "evasive-repair": (
+        "EVASIVE-REPAIR PLANNING DUTY: name the workaround traps to avoid, especially silent "
+        "fallbacks, action retries, settle-polls, tree-only claims, and symptom patches. State "
+        "the simpler root-cause shape the implementation should take."
+    ),
+    "scope-blast": (
+        "SCOPE+BLAST PLANNING DUTY: define scope boundaries, destructive-operation limits, "
+        "secret/data safety, display isolation, exact cleanup scope, and what must be escalated "
+        "instead of broadened."
+    ),
+}
 
 
 def open_council(topic: str, payload: str, roles: list[str]) -> str:
@@ -229,6 +251,14 @@ def _lens_with_rules(spec: dict, task: str, rules: str) -> str:
         f"RULES / CONTRACT TO JUDGE AGAINST:\n{rules}")
 
 
+def _plan_lens_with_rules(role: str, spec: dict, problem: str, rules: str) -> str:
+    role_contract = _PLAN_ROLE_CONTRACTS[role]
+    return (
+        f"{spec['lens']}\n\n"
+        f"{role_contract}\n\n"
+        f"RULES / AUTHORITATIVE DOCS / NON-NEGOTIABLES:\n{rules}")
+
+
 def _blind_prompt_extra() -> str:
     return """BLIND ROUND-0 CONTRACT:
 You must decide independently from only the session topic, artifact, rules, and your lens.
@@ -249,6 +279,73 @@ Return exactly one JSON object and no markdown:
 Use status PASS only when your lens finds no issue that should gate the verdict. Use severity
 block only when the final verdict must not publish until the concern is resolved. Put mixed
 evidence in claim/ground, but classification must choose the governing contract outcome."""
+
+
+def _plan_blind_prompt_extra(role: str) -> str:
+    return f"""BLIND PLANNING ROUND-0 CONTRACT:
+You are producing an implementation PLAN PROPOSAL, not reviewing an already-written artifact.
+No peer proposals are visible in this round. Work only from the shared problem, the rules/docs,
+and your assigned planning duty.
+
+Return a concrete proposal with these sections:
+CLAIMS_AND_GROUNDS:
+- <planning claim> | Ground: <specific rule/doc/problem evidence>
+ORDERED_STEPS:
+1. <implementation or investigation step>
+2. <next step>
+VERIFY:
+- <how this plan proves the result against the real target>
+AVOID:
+- <fallback/workaround/scope trap to avoid>
+UNKNOWN_OR_ESCALATE:
+- <real uncertainty or stop condition, or NONE>
+
+Be specific enough for a producer to implement without inventing a second plan. Do not include
+general encouragement, review verdicts, or artifact critique language. Keep the proposal under
+900 words."""
+
+
+def _plan_proposal_props(_role: str):
+    def parse(_content: str, _ctx: dict) -> dict:
+        return {"kind": "plan_proposal"}
+    return parse
+
+
+def _consensus_plan_props(_content: str, _ctx: dict) -> dict:
+    return {"kind": "consensus_plan"}
+
+
+def _choose_plan_synthesizer(roles: dict, clerk: dict) -> str:
+    owns = str(clerk.get("owns") or "").lower()
+    if "dissent" in owns and "foundation" in roles:
+        return "foundation"
+    for role in ("foundation", "ground-runner", "scope-blast", "evasive-repair"):
+        if role in roles:
+            return role
+    raise RuntimeError("no roster role available to synthesize the consensus plan")
+
+
+def _consensus_prompt_extra() -> str:
+    return """REVEAL PLANNING ROUND CONTRACT:
+All blind plan proposals are now visible. Read every proposal and produce the CONSENSUS PLAN:
+the merged, de-conflicted, ordered implementation plan for the producer.
+
+Requirements:
+- Preserve concrete grounded steps from the role proposals; do not average away dissent.
+- Resolve ordering conflicts explicitly.
+- Include verification against the real target, screenshot/clipboard evidence, and stop conditions.
+- Include the banned fallback/workaround traps and scope boundaries.
+- Cite which roles you are adopting, extending, or rejecting when resolving conflicts.
+- Keep the consensus plan under 1400 words.
+
+Return only the consensus plan text with these sections:
+CONSENSUS_PLAN
+GROUNDING_TO_REUSE
+ORDERED_IMPLEMENTATION_STEPS
+VERIFICATION_GATES
+BANNED_TRAPS_AND_ROOT_CAUSE_SHAPE
+SCOPE_BOUNDARIES_AND_ESCALATIONS
+OPEN_UNKNOWNS"""
 
 
 def _resolution_prompt_extra(concern: dict) -> str:
@@ -409,6 +506,85 @@ def council_review(task: str, artifact: str, rules: str, roster: dict | None = N
     ledger["classification_counts"] = dict(counts)
     return {"verdict": verdict, "open_concerns": open_concerns,
             "ledger": ledger, "per_role": per_role}
+
+
+def council_plan(problem: str, rules: str, roster: dict | None = None) -> dict:
+    """Run a DCM planning council and publish a consensus implementation plan.
+
+    The session topic is always "PLAN" and the payload is exactly the problem. Rules/docs are
+    injected into each expert lens, not hidden in the artifact. The blind round records typed
+    plan_proposal contributions with no claimed peer reads by design. The reveal round seats one
+    explicit synthesizer, makes all proposals visible, records a typed consensus_plan contribution,
+    and publishes that text through mesh.publish_final(). CLI or mesh failures propagate rather
+    than falling back to a local summary.
+    """
+    roles, clerk = _normalize_roster(roster)
+    unsupported = [role for role in roles if role not in _PLAN_ROLE_CONTRACTS]
+    if unsupported:
+        raise ValueError(f"council_plan does not define planning duties for role(s): {', '.join(unsupported)}")
+
+    session_id = mesh.start_session(topic="PLAN", payload=problem, roles=list(roles))
+    per_role = {}
+    ledger = {"session_id": session_id,
+              "clerk": {"seat": clerk["seat"], "voting": False,
+                        "owns": clerk.get("owns"),
+                        "actions": []},
+              "roster": {role: _role_public(spec) for role, spec in roles.items()},
+              "blind_round": [], "reveal_round": []}
+
+    for role, spec in roles.items():
+        record = cli_adapter.cli_expert(
+            session_id, role, _plan_lens_with_rules(role, spec, problem, rules),
+            cli=spec["cli"], peers_visible=False, prompt_extra=_plan_blind_prompt_extra(role),
+            parse_contribution=_plan_proposal_props(role), return_record=True)
+        session = mesh.read_session(session_id)
+        contrib = _contribution_by_id(session, record["contrib_id"])
+        if contrib["kind"] != "plan_proposal":
+            raise RuntimeError(
+                f"plan proposal {record['contrib_id']} from {role} recorded kind {contrib['kind']!r}")
+        proposal = record["content"].strip()
+        if not proposal:
+            raise RuntimeError(f"plan proposal {record['contrib_id']} from {role} was empty")
+        per_role[role] = proposal
+        blind = {"role": role, "contrib_id": record["contrib_id"], "kind": contrib["kind"],
+                 "peers_read": record["peers_read"], "content": proposal}
+        ledger["blind_round"].append(blind)
+        ledger["clerk"]["actions"].append(
+            f"recorded blind plan_proposal from {role} as {record['contrib_id']}")
+
+    synth_role = _choose_plan_synthesizer(roles, clerk)
+    synth_spec = roles[synth_role]
+    synth_lens = (
+        f"{synth_spec['lens']}\n\n"
+        f"You are acting as the {clerk['seat']} synthesizer, using the {synth_role} seat's "
+        f"CLI and lens only to merge the council's blind proposals into one ordered plan. "
+        f"You are non-voting: preserve grounded dissent and open unknowns instead of hiding them.\n\n"
+        f"RULES / AUTHORITATIVE DOCS / NON-NEGOTIABLES:\n{rules}")
+    record = cli_adapter.cli_expert(
+        session_id, "clerk:synthesizer", synth_lens, cli=synth_spec["cli"],
+        peers_visible=True, prompt_extra=_consensus_prompt_extra(),
+        parse_contribution=_consensus_plan_props, return_record=True)
+    session = mesh.read_session(session_id)
+    contrib = _contribution_by_id(session, record["contrib_id"])
+    if contrib["kind"] != "consensus_plan":
+        raise RuntimeError(
+            f"consensus contribution {record['contrib_id']} recorded kind {contrib['kind']!r}")
+    consensus_plan = record["content"].strip()
+    if not consensus_plan:
+        raise RuntimeError(f"consensus contribution {record['contrib_id']} was empty")
+
+    reveal = {"role": "clerk:synthesizer", "synthesizer_role": synth_role,
+              "contrib_id": record["contrib_id"], "kind": contrib["kind"],
+              "peers_read": record["peers_read"], "content": consensus_plan}
+    ledger["reveal_round"].append(reveal)
+    ledger["clerk"]["actions"].append(
+        f"recorded consensus_plan {record['contrib_id']} synthesized via {synth_role}")
+    mesh.publish_final(session_id, consensus_plan)
+    ledger["publish"] = {"status": "published", "final_contrib_id": record["contrib_id"]}
+    ledger["coordination"] = {"blind_round_claims_empty_by_design": True,
+                              "reveal_round_peers_visible": True,
+                              "mesh_verify": mesh.verify_coordination(session_id)}
+    return {"plan": consensus_plan, "per_role": per_role, "ledger": ledger}
 
 
 if __name__ == "__main__":
