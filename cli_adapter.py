@@ -14,13 +14,23 @@ the CLI (containerize, drop fs/network) before seating it on an untrusted-conten
 is inherent to running an acting agent on shared deliberation; it is documented, not solved.
 """
 from __future__ import annotations
+from collections.abc import Callable
 import os, re, subprocess
 import mesh
+
+
+def _raise_on_failure(cli: str, proc: subprocess.CompletedProcess[str]) -> None:
+    if proc.returncode == 0:
+        return
+    out = ((proc.stdout or "") + (("\n[STDERR]\n" + proc.stderr) if proc.stderr else "")).strip()
+    raise RuntimeError(f"{cli} exited {proc.returncode}:\n{out[-2000:]}")
+
 
 def _run_codex(prompt: str, timeout: int = 400) -> str:
     p = subprocess.run(["codex", "exec", "--skip-git-repo-check", prompt],
                        cwd="/tmp", stdin=subprocess.DEVNULL,
                        capture_output=True, text=True, timeout=timeout)
+    _raise_on_failure("codex", p)
     out = p.stdout
     # codex echoes the final answer after the trailing "tokens used\n<n>" footer
     tail = out.rsplit("tokens used", 1)[-1]
@@ -28,40 +38,69 @@ def _run_codex(prompt: str, timeout: int = 400) -> str:
     return tail or out.strip()
 
 def _run_gemini(prompt: str, timeout: int = 400) -> str:
+    env = os.environ.copy()
+    env["GEMINI_CLI_TRUST_WORKSPACE"] = "true"
     p = subprocess.run(["gemini", "-p", prompt], cwd="/tmp", stdin=subprocess.DEVNULL,
-                       capture_output=True, text=True, timeout=timeout)
+                       capture_output=True, text=True, timeout=timeout, env=env)
+    _raise_on_failure("gemini", p)
     return (p.stdout or "").strip()
 
 def _run_claude(prompt: str, timeout: int = 400) -> str:
     p = subprocess.run(["claude", "-p", prompt, "--dangerously-skip-permissions"],
                        cwd="/tmp", stdin=subprocess.DEVNULL,
                        capture_output=True, text=True, timeout=timeout)
+    _raise_on_failure("claude", p)
     return (p.stdout or "").strip()
 
 def _run_grok(prompt: str, timeout: int = 400) -> str:
     p = subprocess.run(["grok", "-p", prompt, "--always-approve", "--permission-mode", "bypassPermissions"],
                        cwd="/tmp", stdin=subprocess.DEVNULL,
                        capture_output=True, text=True, timeout=timeout)
+    _raise_on_failure("grok", p)
     return (p.stdout or "").strip()
 
 _RUNNERS = {"codex": _run_codex, "gemini": _run_gemini, "claude": _run_claude, "grok": _run_grok}
 
-def cli_expert(session_id: str, role: str, lens: str, cli: str = "codex", max_retry: int = 4) -> str:
+def cli_expert(session_id: str, role: str, lens: str, cli: str = "codex", max_retry: int = 4,
+               *, peers_visible: bool = True, prompt_extra: str | None = None,
+               parse_contribution: Callable[[str, dict], dict] | None = None,
+               return_record: bool = False) -> str | dict:
+    """Run one CLI expert and commit its output to the mesh.
+
+    peers_visible=False is for sealed blind rounds: the adapter still reads the
+    session version needed for CAS, but the CLI prompt receives no peer content
+    and the mesh contribution honestly claims no peer reads.
+    """
     run = _RUNNERS[cli]
     for _ in range(max_retry):
         ctx = mesh.read_session(session_id)
-        peers_txt = "\n\n".join(f"[{c['role']}] {c['content']}" for c in ctx["contributions"]) or "(none yet)"
+        visible_peers = ctx["contributions"] if peers_visible else []
+        peers_txt = "\n\n".join(f"[{c['role']}] {c['content']}" for c in visible_peers) or "(none yet)"
+        peer_header = "PEER CONTRIBUTIONS (build on / sharpen / disagree - do NOT restate, do NOT edit any files)"
+        if not peers_visible:
+            peer_header = "PEER CONTRIBUTIONS (sealed blind round - hidden from this expert)"
         prompt = (
             f"You are a DCM (Distributed Cognitive Mesh) council expert. LENS: {lens}\n\n"
-            f"SHARED PROBLEM:\n{ctx['payload']}\n\n"
-            f"PEER CONTRIBUTIONS (build on / sharpen / disagree — do NOT restate, do NOT edit any files):\n{peers_txt}\n\n"
+            f"SESSION TOPIC:\n{ctx['topic']}\n\n"
+            f"SHARED ARTIFACT:\n{ctx['payload']}\n\n"
+            f"{peer_header}:\n{peers_txt}\n\n"
             f"Output ONLY your contribution text through your lens — concise, dense, additive. GROUNDED form: "
             f"each CLAIM with its GROUND, and an explicit STANCE (Agree/Disagree/Extend) with justification "
             f"for each peer you engage — never agree just to converge.")
+        if prompt_extra:
+            prompt = f"{prompt}\n\n{prompt_extra}"
         content = run(prompt)
-        peers = [c["contrib_id"] for c in ctx["contributions"]]
+        typed = parse_contribution(content, ctx) if parse_contribution else {}
+        if not isinstance(typed, dict):
+            raise TypeError("parse_contribution must return a dict of mesh.contribute keyword arguments")
+        peers = [c["contrib_id"] for c in visible_peers]
         try:
-            return mesh.contribute(session_id, role, content, peers_read=peers, read_version=ctx["version"])
+            cid = mesh.contribute(session_id, role, content, peers_read=peers,
+                                  read_version=ctx["version"], **typed)
+            if return_record:
+                return {"contrib_id": cid, "content": content, "peers_read": peers,
+                        "read_version": ctx["version"], "typed": typed}
+            return cid
         except mesh.StaleReadError:
             continue
     raise RuntimeError(f"CLI expert {role} ({cli}) could not land after {max_retry} retries")
