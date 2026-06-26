@@ -52,6 +52,14 @@ _AUTH = (_USER, _PASSWORD) if _USER and _PASSWORD else None
 _LOOPBACK = {"localhost", "127.0.0.1", "::1", "[::1]", "", None}
 _driver = None
 
+_CONTRIBUTION_KINDS = {"contribution", "concern", "resolution"}
+_CONCERN_SEVERITIES = {"block", "warn"}
+_RESOLUTION_DISPOSITIONS = {
+    "FIX-VERIFIED", "FALSE-POSITIVE", "OUT-OF-SCOPE", "ACCEPTED-RISK", "ESCALATE"}
+_CLOSING_DISPOSITIONS = {"FIX-VERIFIED", "FALSE-POSITIVE", "OUT-OF-SCOPE", "ACCEPTED-RISK"}
+_EVIDENCE_REQUIRED_DISPOSITIONS = {"FIX-VERIFIED", "FALSE-POSITIVE"}
+_VETO_CLOSING_DISPOSITIONS = {"FIX-VERIFIED", "ACCEPTED-RISK"}
+
 
 class StaleReadError(Exception):
     """Raised when a contribution loses the compare-and-set for its slot — a peer took the
@@ -64,6 +72,15 @@ class StaleReadError(Exception):
         self.new_peer_ids = new_peer_ids
         super().__init__(f"stale read: session at v{current_version}, you read v{your_version}; "
                          f"{len(new_peer_ids)} new peer(s) arrived — re-read and incorporate them")
+
+
+class UnresolvedConcernsError(Exception):
+    """Raised when publish_final would close over unresolved block-severity concerns."""
+    def __init__(self, open_concern_ids: list[str]):
+        self.open_concern_ids = open_concern_ids
+        super().__init__(
+            "cannot publish final; unresolved block concern(s): "
+            f"{', '.join(open_concern_ids)}")
 
 
 def _require_safe_uri(uri: str) -> None:
@@ -96,6 +113,77 @@ def _db():
     return _driver
 
 
+def _clean_optional_text(value: str | None, field: str) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ValueError(f"{field} must be a string")
+    value = value.strip()
+    if not value:
+        raise ValueError(f"{field} must be non-empty when provided")
+    return value
+
+
+def _typed_props(kind: str, severity: str | None, about: str | None, veto: bool,
+                 disposition: str | None, evidence_ref: str | None) -> dict:
+    if kind not in _CONTRIBUTION_KINDS:
+        raise ValueError(f"kind must be one of {sorted(_CONTRIBUTION_KINDS)}")
+    if not isinstance(veto, bool):
+        raise ValueError("veto must be a bool")
+
+    about = _clean_optional_text(about, "about")
+    evidence_ref = _clean_optional_text(evidence_ref, "evidence_ref")
+    props = {"kind": kind}
+
+    if kind == "contribution":
+        if severity is not None or about is not None or veto or disposition is not None or evidence_ref is not None:
+            raise ValueError("plain contributions cannot carry concern/resolution fields")
+        return props
+
+    if kind == "concern":
+        if severity not in _CONCERN_SEVERITIES:
+            raise ValueError(f"concern severity must be one of {sorted(_CONCERN_SEVERITIES)}")
+        if disposition is not None or evidence_ref is not None:
+            raise ValueError("concerns cannot carry resolution disposition/evidence_ref")
+        props["severity"] = severity
+        if about is not None:
+            props["about"] = about
+        if veto:
+            props["veto"] = True
+        return props
+
+    if severity is not None or veto:
+        raise ValueError("resolutions cannot carry severity or veto")
+    if about is None:
+        raise ValueError("resolution about must name the concern contrib_id")
+    if disposition not in _RESOLUTION_DISPOSITIONS:
+        raise ValueError(f"resolution disposition must be one of {sorted(_RESOLUTION_DISPOSITIONS)}")
+    if disposition in _EVIDENCE_REQUIRED_DISPOSITIONS and evidence_ref is None:
+        raise ValueError(f"{disposition} resolution requires non-empty evidence_ref")
+    props["about"] = about
+    props["disposition"] = disposition
+    if evidence_ref is not None:
+        props["evidence_ref"] = evidence_ref
+    return props
+
+
+def _has_evidence(value: str | None) -> bool:
+    return isinstance(value, str) and bool(value.strip())
+
+
+def _resolution_closes(concern: dict, resolution: dict) -> bool:
+    if resolution.get("kind") != "resolution" or resolution.get("about") != concern["contrib_id"]:
+        return False
+    disposition = resolution.get("disposition")
+    if disposition not in _CLOSING_DISPOSITIONS:
+        return False
+    if concern.get("veto") and disposition not in _VETO_CLOSING_DISPOSITIONS:
+        return False
+    if disposition in _EVIDENCE_REQUIRED_DISPOSITIONS and not _has_evidence(resolution.get("evidence_ref")):
+        return False
+    return True
+
+
 def start_session(topic: str, payload: str, roles: list[str] | None = None) -> str:
     """Open a coordination session. payload = the artifact under work (e.g. a draft response)."""
     sid = f"dcm_{uuid.uuid4().hex[:12]}"
@@ -124,19 +212,29 @@ def read_session(session_id: str) -> dict:
         # order by seq (authoritative for current contributions), created as the null-seq fallback.
         contribs = s.run("""MATCH (c:DCMContribution)-[:IN]->(:DCMSession {session_id:$sid})
                             RETURN c ORDER BY c.seq, c.created""", sid=session_id)
-        cs = [{"contrib_id": c["c"]["contrib_id"], "role": c["c"]["role"],
-               "content": c["c"]["content"], "seq": c["c"].get("seq"),
-               "claimed_peers": c["c"].get("claimed_peers"),
-               "peers_present": c["c"].get("peers_present"),
-               "created": c["c"]["created"]}
-              for c in contribs]
+        cs = []
+        for c in contribs:
+            n = c["c"]
+            cs.append({"contrib_id": n["contrib_id"], "role": n["role"],
+                       "content": n["content"], "seq": n.get("seq"),
+                       "kind": n.get("kind") or "contribution",
+                       "severity": n.get("severity"),
+                       "about": n.get("about"),
+                       "veto": bool(n.get("veto")),
+                       "disposition": n.get("disposition"),
+                       "evidence_ref": n.get("evidence_ref"),
+                       "claimed_peers": n.get("claimed_peers"),
+                       "peers_present": n.get("peers_present"),
+                       "created": n["created"]})
     return {"session_id": session_id, "topic": x["topic"], "payload": x["payload"],
             "status": x["status"], "final": x.get("final"),
             "contributions": cs, "version": len(cs)}
 
 
 def contribute(session_id: str, role: str, content: str, peers_read: list[str],
-               read_version: int) -> str:
+               read_version: int, *, kind: str = "contribution", severity: str | None = None,
+               about: str | None = None, veto: bool = False, disposition: str | None = None,
+               evidence_ref: str | None = None) -> str:
     """Write a contribution against a compare-and-set on the slot you read.
 
     read_version = the `version` you got from read_session (REQUIRED; open a fresh session
@@ -155,10 +253,16 @@ def contribute(session_id: str, role: str, content: str, peers_read: list[str],
     (your self-report; verify_coordination flags you if it omits a peer present to you). The
     server ALSO records `peers_present` (who was present at commit) — that is PRESENCE, not a
     proof you incorporated them.
+
+    kind = "contribution" keeps existing callers unchanged. kind="concern" records a typed
+    blocking/warning concern; kind="resolution" records the append-only close attempt for a
+    concern. FIX-VERIFIED and FALSE-POSITIVE resolutions require non-empty evidence_ref, and
+    open_concerns() is the projection publish_final uses to fail closed.
     """
     if not isinstance(read_version, int) or read_version < 0:
         raise ValueError("read_version must be the non-negative int 'version' from read_session "
                          "(open a fresh session with read_version=0)")
+    typed_props = _typed_props(kind, severity, about, veto, disposition, evidence_ref)
     cid = f"contrib_{uuid.uuid4().hex[:12]}"
     with _db().session() as s:
         try:
@@ -171,10 +275,13 @@ def contribute(session_id: str, role: str, content: str, peers_read: list[str],
                            WHERE cnt = $rv
                            CREATE (n:DCMContribution {contrib_id:$cid, session_id:$sid, seq:cnt,
                                    role:$role, content:$content,
-                                   claimed_peers:$claimed, peers_present:present, created:$ts})-[:IN]->(x)
+                                   claimed_peers:$claimed, peers_present:present, created:$ts})
+                           SET n += $typed_props
+                           CREATE (n)-[:IN]->(x)
                            RETURN n.contrib_id AS cid""",
                         sid=session_id, cid=cid, role=role, content=content,
-                        claimed=peers_read or [], rv=read_version, ts=time.time()).single()
+                        claimed=peers_read or [], rv=read_version, ts=time.time(),
+                        typed_props=typed_props).single()
         except ConstraintError:
             # slot already taken -> a peer won this version concurrently. Re-read and redo.
             fresh = read_session(session_id)
@@ -221,9 +328,32 @@ def verify_coordination(session_id: str) -> dict:
             "coordinated": len(cs) > 1 and not silos}
 
 
+def open_concerns(session_id: str) -> list[dict]:
+    """Return block-severity concerns that lack a valid closing resolution.
+
+    Closure is a projection over the append log: a resolution closes only the concern it names
+    in `about`, ESCALATE does not close, FIX-VERIFIED/FALSE-POSITIVE need non-empty evidence,
+    and safety veto concerns can be closed only by FIX-VERIFIED or ACCEPTED-RISK. This is graph
+    state, not a semantic claim that the evidence is true.
+    """
+    cs = read_session(session_id)["contributions"]
+    resolutions = [c for c in cs if c.get("kind") == "resolution"]
+    return [c for c in cs
+            if c.get("kind") == "concern"
+            and c.get("severity") == "block"
+            and not any(_resolution_closes(c, r) for r in resolutions)]
+
+
 def publish_final(session_id: str, final: str) -> None:
-    """Close the session; the DISTILLED final is what's eligible to flow to ISMA (not the
-    sausage). read_session() surfaces it as `final`."""
+    """Close the session only when the append-log concern projection is clear.
+
+    The DISTILLED final is what's eligible to flow to ISMA (not the sausage). read_session()
+    surfaces it as `final`. Honest scope: this enforces that block concerns have valid typed
+    resolutions with required evidence refs; it does not prove the external evidence itself.
+    """
+    open_ids = [c["contrib_id"] for c in open_concerns(session_id)]
+    if open_ids:
+        raise UnresolvedConcernsError(open_ids)
     with _db().session() as s:
         s.run("MATCH (x:DCMSession {session_id:$sid}) SET x.status='closed', x.final=$final, x.closed=$ts",
               sid=session_id, final=final, ts=time.time())
