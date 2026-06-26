@@ -3,6 +3,7 @@ Throwaway session, scoped cleanup (deletes ONLY this test session by id). Valida
 1. start/read/contribute sequential build (read-before-write)
 2. CAS serialization: N concurrent writers at the same version -> exactly ONE commits, rest StaleReadError
 3. verify_coordination: passes honest claims, FLAGS a non-claiming silo
+4. evidence-gated publish: unresolved block concern refuses, FIX-VERIFIED evidence closes
 """
 import os, sys, concurrent.futures as cf
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -49,6 +50,39 @@ try:
     check("verify_coordination clean BEFORE silo (coordinated==True)", v_clean.get("coordinated") is True)
     print(f"  verify_coordination (after silo): {v_silo}")
     check("verify_coordination FLAGS the non-claiming silo", flagged)
+
+    # 4. evidence-gated publish: block concern refuses; evidence-backed resolution closes it.
+    rC = mesh.read_session(sid)
+    all_peers = [c["contrib_id"] for c in rC["contributions"]]
+    concern = mesh.contribute(sid, "safety", "blocking concern: publish must wait for evidence",
+                              peers_read=all_peers, read_version=rC["version"], kind="concern",
+                              severity="block", about=b, veto=True)
+    open_before = mesh.open_concerns(sid)
+    check("open_concerns includes the block concern",
+          [c["contrib_id"] for c in open_before] == [concern])
+    refused = False
+    try:
+        mesh.publish_final(sid, "should not publish")
+    except mesh.UnresolvedConcernsError as e:
+        refused = concern in e.open_concern_ids
+        print(f"  publish_final refused unresolved concern ids: {e.open_concern_ids}")
+    check("publish_final REFUSES unresolved block concern", refused)
+
+    rR = mesh.read_session(sid)
+    all_peers = [c["contrib_id"] for c in rR["contributions"]]
+    mesh.contribute(sid, "runner", "FIX-VERIFIED: live validation artifact attached",
+                    peers_read=all_peers, read_version=rR["version"], kind="resolution",
+                    about=concern, disposition="FIX-VERIFIED",
+                    evidence_ref="validate_substrate.py live Neo4j run")
+    check("open_concerns empty after FIX-VERIFIED evidence", mesh.open_concerns(sid) == [])
+    published = False
+    try:
+        mesh.publish_final(sid, "validated final")
+        closed = mesh.read_session(sid)
+        published = closed["status"] == "closed" and closed["final"] == "validated final"
+    except mesh.UnresolvedConcernsError as e:
+        print(f"  unexpected publish refusal after resolution: {e.open_concern_ids}")
+    check("publish_final SUCCEEDS after valid resolution", published)
 finally:
     # scoped cleanup: ONLY this test session + its contributions, by id (never unscoped)
     with mesh._db().session() as s:
