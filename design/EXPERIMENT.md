@@ -29,7 +29,7 @@ matters — the Grok-Heavy "customized functions" principle):
 
 **Memory & Git research (run PRE-FLIGHT, before the producer's first token)**
 - **Memory expert** — searches ISMA (1M+ tiles + prose) + our prior decisions; surfaces "we already solved/built this" so the producer doesn't re-derive.
-- **Git expert** — blame / log / bisect; validates assumptions against how the code actually evolved; enforces clean+tracked tree; catches regression-reintroduction (don't delete a guard a prior commit added on purpose).
+- **Git expert** — blame / log / bisect; validates assumptions against how the code actually evolved; enforces clean+tracked tree; catches regression-reintroduction (don't delete a guard a prior commit added on purpose). **Wields GitNexus** (`gitnexus_context` for a symbol's callers/callees/flows, `gitnexus_query` to find execution flows by concept) instead of raw grep — structured call-graph intelligence, not text search.
 
 **Auditing — targeted failure-mode prevention (public modes + our private/observed modes)**
 - **Fallback-hunter** — our #1 observed mode: silent fallbacks / evasive repair / stub-guards. Fires the moment one is written.
@@ -56,6 +56,13 @@ what we are consulting on and measuring*, within this fixed shape.
   vacuous (FALSE-POSITIVE), out-of-scope, consented-risk, or escalate-to-human. Blast-shield's
   safety veto is unilateral. **No vote-away on correctness; no forced unanimity** — you cannot
   out-vote a failing test, and deadlock escalates to a human rather than manufacturing consensus.
+
+### Code intelligence — GitNexus (cross-cutting)
+
+The council runs on a **GitNexus index** of the target repo (`gitnexus analyze` = the 6SIGMA INGEST step; the dcm repo itself is indexed: ~1,057 nodes / 1,395 edges / 42 flows). It is the structured code-intelligence layer the experts share, not raw grep/blame:
+- **Impact gate (mandatory before any Producer edit):** `gitnexus_impact(symbol, direction:"upstream")` returns the blast radius — direct callers, affected execution flows, risk level. **HIGH/CRITICAL risk is surfaced to the council as a concern** before the edit lands (and `gitnexus_detect_changes` confirms a diff only touched the expected symbols).
+- **Foundation / Git expert:** `gitnexus_context` (a symbol's callers/callees + which flows it's in) and `gitnexus_query` (find execution flows by concept) — so "validate assumptions against how the code works" is a call-graph query, not a text search.
+- **Root-cause / Ground-runner:** `gitnexus_query` to trace the execution flow of a failure instead of grepping. This is the 6SIGMA MEASURE+ANALYZE step — pin the root cause in the graph before touching code.
 
 ## Q3 — How does it layer on the orchestrator + gates?
 

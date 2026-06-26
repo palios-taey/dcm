@@ -90,6 +90,7 @@ def reproduces(instance: dict, patch_str: str, test_rel_path: str, test_body: st
 # ---------------------------------------------------------------------------
 import re
 from solver_codex import solve_instance, CODEX_MODEL, extract_repo, run_codex, capture_patch
+from solver import _cmd, CLI_MODEL
 import shutil, tempfile as _tf
 
 TEST_PROMPT = """A bug is described below for the repository in the current working directory (checked out at the buggy commit). Write ONE pytest regression test, in a NEW file `test_dcm_repro.py` at the repo root, that FAILS on this buggy code and would PASS once the bug is fixed. Do NOT fix the bug. Do NOT edit any other file. Only create test_dcm_repro.py.
@@ -185,19 +186,73 @@ class BoNArm:
 
 # ---------------------------------------------------------------------------
 # I / D — role council. I and D are byte-identical EXCEPT: in the revision round
-# D's roles see all peers' first-round critiques (forced read/revise); I's see
+# D's roles see all peers' first-round concerns (forced read/revise); I's see
 # only their own. That single delta IS the coordination primitive (D-I primary).
 # ---------------------------------------------------------------------------
+PRODUCER = {"seat": "Producer", "cli": "codex", "model": CODEX_MODEL}
+
 ROLES = {
-    "correctness": "You are a CORRECTNESS reviewer. Find where the candidate fix is wrong, incomplete, or misses edge cases of the issue.",
-    "security":    "You are a SECURITY ADVERSARY. Find how the candidate fix could introduce a vulnerability, unsafe input handling, or regression.",
-    "rootcause":   "You are a 6SIGMA ROOT-CAUSE challenger. Decide whether the candidate fix treats the true upstream cause or just patches a symptom; demand the simpler root-cause shape.",
-    "testwriter":  "You are a TEST-WRITER. Identify the behaviour the fix must satisfy and whether the candidate actually achieves it.",
+    "foundation": {
+        "seat": "Foundation",
+        "cli": "gemini",
+        "lens": "You are the FOUNDATION reviewer. Use memory-shaped and Git-shaped grounding: look for ignored prior solutions, duplicated existing utilities, and regression reintroduction from history.",
+    },
+    "ground-runner": {
+        "seat": "Execution/Ground-runner",
+        "cli": "claude",
+        "lens": "You are the EXECUTION/GROUND-RUNNER reviewer. Run relevant visible code or tests in this throwaway checkout when useful. Own hallucinated APIs, test tamper, deleted or neutered tests, and no-op fixes.",
+    },
+    "evasive-repair": {
+        "seat": "Evasive-repair",
+        "cli": "grok",
+        "lens": "You are the EVASIVE-REPAIR reviewer. Own silent fallbacks, swallowed errors, stub guards, and symptom-not-cause patches. Demand the simpler 6SIGMA root-cause shape.",
+    },
+    "scope-blast": {
+        "seat": "Scope + Safety-veto",
+        "cli": "gemini",
+        "lens": "You are the SCOPE+BLAST reviewer with unilateral safety-veto authority. Own scope violations, destructive operations, secrets, injection/exfiltration, and unsafe broad blast radius.",
+    },
 }
+
+CLERK = {
+    "seat": "Provenance Clerk",
+    "kind": "deterministic state-machine",
+    "voting": False,
+    "owns": "concern ledger, parse status, peer-visibility provenance, dissent preservation",
+}
+
+if ROLES["ground-runner"]["cli"] == PRODUCER["cli"]:
+    raise RuntimeError("ground-runner MUST use a different base model than the producer")
+if any(role["cli"] == PRODUCER["cli"] for role in ROLES.values()):
+    raise RuntimeError("semantic reviewer roles must be staffed off the producer base model")
+
+FOUNDATION_PREFLIGHT_PROMPT = """{role}
+
+The repository is in the working directory at the buggy commit. Do NOT edit files. Read the issue and ground the producer before it writes the first patch. Use Git history or existing code search where useful.
+
+Issue:
+---
+{problem}
+---
+Output exactly two lines:
+GROUNDING: <specific prior code/history/memory-shaped facts the producer must honor, or NONE>
+CONCERN: <one ignored-prior-solution or regression risk to avoid, or NONE>"""
+
+PRODUCER_PROMPT = """You are the PRODUCER. The repository is checked out in the current working directory at the exact buggy commit.
+
+Issue:
+---
+{problem}
+---
+Foundation pre-flight grounding:
+---
+{grounding}
+---
+Make the minimal source-code changes that resolve the issue. Honor the grounding unless the code proves it obsolete. Do NOT write new test files or modify the test suite. Stop when the source fix is complete."""
 
 CRITIQUE_PROMPT = """{role}
 
-The repository is in the working directory at the buggy commit, with a CANDIDATE fix already applied. Do NOT edit files. Read the issue and the candidate fix, and write a short, specific critique: what is wrong or missing, and concretely what should change.
+The repository is in the working directory at the buggy commit, with a CANDIDATE fix already applied. Do NOT edit files. Review only through your assigned seat. Produce a concern record, not general prose.
 
 Issue:
 ---
@@ -207,23 +262,24 @@ Candidate fix (already applied):
 ---
 {patch}
 ---
-Write only your critique and stop."""
+Output exactly one line:
+CONCERN: <NONE if this seat finds no issue; otherwise one specific, addressable concern with Observed/Inferred/Unknown evidence>"""
 
 REVISE_PROMPT = """{role}
 
-The repository is in the working directory at the buggy commit with a candidate fix applied. Revise the source to best resolve the issue, incorporating the critique(s) below. Edit files directly; do not touch the test suite.
+The repository is in the working directory at the buggy commit with a candidate fix applied. Revise the source to best resolve the issue, incorporating the concern(s) below through your assigned seat. Edit files directly; do not touch the test suite.
 
 Issue:
 ---
 {problem}
 ---
-Critique(s) to address:
+Concern(s) to address:
 ---
-{critiques}
+{concerns}
 ---
 Make your edits and stop."""
 
-SYNTH_PROMPT = """You are the SYNTHESIZER. Several reviewers each revised the fix for the issue below. Their combined diffs are shown. Produce the single best final fix in the working directory (repo at the buggy commit), reconciling them into minimal correct source changes. Do not edit tests.
+FINAL_PROMPT = """You are the PRODUCER. Several semantic reviewers revised your candidate fix for the issue below. Their combined diffs are shown. Produce the single best final fix in the working directory (repo at the buggy commit), reconciling them into minimal correct source changes. Do not edit tests.
 
 Issue:
 ---
@@ -250,21 +306,50 @@ def _apply_to_worktree(wd: Path, patch: str) -> bool:
     return b.returncode == 0
 
 
-def _codex_on_patched(instance, base_patch, prompt, read_only=False, timeout_s=900):
-    """Clone@base_commit, apply base_patch to the WORKING TREE (uncommitted), run
-    codex; return (complete_diff_vs_clean_base, stdout). The diff includes base_patch
-    + codex's edits, which is exactly what the harness needs (it applies to clean base)."""
-    wd = Path(_tf.mkdtemp(prefix=f"role_{instance['instance_id']}_"))
+def _role_model(role: dict) -> str:
+    return CLI_MODEL.get(role["cli"], "unknown")
+
+
+def _extract_concern(output: str) -> dict:
+    """Parse the reviewer concern line; unparsed output is recorded as Observed failure."""
+    for line in output.splitlines():
+        if line.strip().upper().startswith("CONCERN:"):
+            concern = line.split(":", 1)[1].strip()
+            return {"parsed": bool(concern), "concern": concern or "UNPARSED: empty CONCERN line",
+                    "raw": output[-1500:]}
+    return {"parsed": False,
+            "concern": "UNPARSED: reviewer output did not contain a CONCERN line",
+            "raw": output[-1500:]}
+
+
+def _concern_block(concerns: dict) -> str:
+    return "\n\n".join(f"[{role}]\nCONCERN: {data['concern']}" for role, data in concerns.items())
+
+
+def _cli_on_patched(instance, base_patch, prompt, cli: str, read_only=False, timeout_s=900):
+    """Clone@base_commit, apply base_patch, run one staffed CLI, and return
+    (complete_diff_vs_clean_base, output). Observed CLI/apply failures raise."""
+    wd = Path(_tf.mkdtemp(prefix=f"role_{cli}_{instance['instance_id']}_"))
+    env = os.environ.copy()
+    env["GEMINI_CLI_TRUST_WORKSPACE"] = "true"
     try:
         extract_repo(instance, wd)
-        _apply_to_worktree(wd, base_patch)
-        sandbox = ["-s", "read-only"] if read_only else ["--dangerously-bypass-approvals-and-sandbox"]
-        cmd = ["codex", "exec", "-C", str(wd), "-m", CODEX_MODEL, *sandbox, "--skip-git-repo-check", prompt]
-        p = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout_s)
+        if not _apply_to_worktree(wd, base_patch):
+            raise RuntimeError(f"PATCH_APPLY_FAILED for {instance['instance_id']}")
+        if cli == "codex":
+            sandbox = ["-s", "read-only"] if read_only else ["--dangerously-bypass-approvals-and-sandbox"]
+            cmd = ["codex", "exec", "-C", str(wd), "-m", CODEX_MODEL,
+                   *sandbox, "--skip-git-repo-check", prompt]
+        else:
+            cmd = _cmd(cli, wd, prompt)
+        p = subprocess.run(cmd, cwd=str(wd), env=env, capture_output=True, text=True, timeout=timeout_s)
+        out = (p.stdout or "") + (("\n[STDERR]\n" + p.stderr) if p.stderr else "")
+        if p.returncode != 0:
+            raise RuntimeError(f"{cli} exited {p.returncode} on {instance['instance_id']}:\n{out[-1500:]}")
         # diff vs base_commit (robust to codex committing its own edits)
         diff = subprocess.check_output(
             ["git", "-C", str(wd), "diff", "--no-color", instance["base_commit"]], text=True)
-        return diff, (p.stdout or "")
+        return diff, out
     finally:
         shutil.rmtree(wd, ignore_errors=True)
 
@@ -279,37 +364,70 @@ class CouncilArm:
         from harness import ArmResult
         iid = instance["instance_id"]; t0 = time.time()
         prov = {"arm": self.name, "instance_id": iid, "peer_visible": self.peer_visible,
-                "roles": list(ROLES)}
-        base = solve_instance(instance, model=CODEX_MODEL)["model_patch"]
+                "roles": list(ROLES),
+                "roster": {"producer": PRODUCER,
+                           "reviewers": {r: {**spec, "model": _role_model(spec)}
+                                         for r, spec in ROLES.items()},
+                           "clerk": CLERK}}
+        foundation = ROLES["foundation"]
+        _, grounding = _cli_on_patched(
+            instance, "",
+            FOUNDATION_PREFLIGHT_PROMPT.format(role=foundation["lens"],
+                                               problem=instance["problem_statement"]),
+            foundation["cli"], read_only=True)
+        prov["foundation_preflight"] = {"cli": foundation["cli"],
+                                        "model": _role_model(foundation),
+                                        "output": grounding[-2000:],
+                                        "concern": _extract_concern(grounding)}
+        base, _ = _cli_on_patched(
+            instance, "",
+            PRODUCER_PROMPT.format(problem=instance["problem_statement"],
+                                   grounding=grounding[-2000:]),
+            PRODUCER["cli"])
         prov["base_patch_lines"] = len(base.splitlines())
-        # Round 1: blind critiques (IDENTICAL for I and D)
-        crit = {}
-        for role, desc in ROLES.items():
-            _, c = _codex_on_patched(instance, base,
-                CRITIQUE_PROMPT.format(role=desc, problem=instance["problem_statement"], patch=base),
-                read_only=True)
-            crit[role] = c.strip()[-1500:]
-        prov["round1_critiques"] = {r: crit[r] for r in ROLES}
-        # Round 2: revise. The ONLY I/D delta: I sees own critique; D sees ALL peers' critiques.
+        # Round 1: blind concerns (IDENTICAL for I and D)
+        concerns = {}
+        for role, spec in ROLES.items():
+            _, c = _cli_on_patched(
+                instance, base,
+                CRITIQUE_PROMPT.format(role=spec["lens"],
+                                       problem=instance["problem_statement"],
+                                       patch=base),
+                spec["cli"], read_only=True)
+            concerns[role] = _extract_concern(c)
+        prov["round1_concerns"] = {r: concerns[r] for r in ROLES}
+        prov["clerk_ledger"] = {"seat": CLERK["seat"], "voting": False,
+                                "open_concerns": {r: concerns[r]["concern"] for r in ROLES},
+                                "unparsed": [r for r in ROLES if not concerns[r]["parsed"]]}
+        # Round 2: revise. The ONLY I/D delta: I sees own concern; D sees ALL peers' concerns.
         revisions = {}
-        for role, desc in ROLES.items():
-            seen = crit[role] if not self.peer_visible else \
-                "\n\n".join(f"[{r}]\n{crit[r]}" for r in ROLES)
-            rev, _ = _codex_on_patched(instance, base,
-                REVISE_PROMPT.format(role=desc, problem=instance["problem_statement"], critiques=seen))
+        for role, spec in ROLES.items():
+            seen = f"[{role}]\nCONCERN: {concerns[role]['concern']}" if not self.peer_visible else \
+                _concern_block(concerns)
+            rev, _ = _cli_on_patched(
+                instance, base,
+                REVISE_PROMPT.format(role=spec["lens"],
+                                     problem=instance["problem_statement"],
+                                     concerns=seen),
+                spec["cli"])
             revisions[role] = rev
         prov["round2_revisions"] = {r: {"lines": len(revisions[r].splitlines()),
-                                        "saw_peers": self.peer_visible} for r in ROLES}
-        # Synthesizer (byte-identical for I and D) reconciles the revised diffs
+                                        "saw_peers": self.peer_visible,
+                                        "cli": ROLES[r]["cli"],
+                                        "model": _role_model(ROLES[r])} for r in ROLES}
+        # Producer finalization is byte-identical for I and D; the clerk does not vote.
         revblock = "\n\n".join(f"=== {r} ===\n{revisions[r]}" for r in ROLES if revisions[r].strip())
-        final, _ = _codex_on_patched(instance, base,
-            SYNTH_PROMPT.format(problem=instance["problem_statement"], revisions=revblock or "(no revisions)"))
-        final = final if final.strip() else base  # fall back to base if synth produced nothing
+        final, _ = _cli_on_patched(
+            instance, base,
+            FINAL_PROMPT.format(problem=instance["problem_statement"],
+                                revisions=revblock or "(no revisions)"),
+            PRODUCER["cli"])
         prov["final_patch_lines"] = len(final.splitlines())
-        prov["synth_fell_back_to_base"] = (not final.strip()) or (final == base)
+        prov["final_empty"] = not final.strip()
+        prov["final_same_as_base"] = final == base
         _record(self.name, iid, prov)
         return ArmResult(instance_id=iid, model_patch=final, wall_clock_s=time.time() - t0,
-                         notes=f"{self.name} peer_visible={self.peer_visible} roles={len(ROLES)} | tokens:codex-exec-not-exposed")
+                         notes=f"{self.name} peer_visible={self.peer_visible} reviewers={len(ROLES)} clerk=non-voting | tokens:cli-not-exposed")
 
 
 if __name__ == "__main__":
