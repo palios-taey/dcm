@@ -52,7 +52,8 @@ _AUTH = (_USER, _PASSWORD) if _USER and _PASSWORD else None
 _LOOPBACK = {"localhost", "127.0.0.1", "::1", "[::1]", "", None}
 _driver = None
 
-_CONTRIBUTION_KINDS = {"contribution", "concern", "resolution"}
+_PLAIN_CONTRIBUTION_KINDS = {"contribution", "plan_proposal", "consensus_plan"}
+_CONTRIBUTION_KINDS = _PLAIN_CONTRIBUTION_KINDS | {"concern", "resolution"}
 _CONCERN_SEVERITIES = {"block", "warn"}
 _RESOLUTION_DISPOSITIONS = {
     "FIX-VERIFIED", "FALSE-POSITIVE", "OUT-OF-SCOPE", "ACCEPTED-RISK", "ESCALATE"}
@@ -135,9 +136,9 @@ def _typed_props(kind: str, severity: str | None, about: str | None, veto: bool,
     evidence_ref = _clean_optional_text(evidence_ref, "evidence_ref")
     props = {"kind": kind}
 
-    if kind == "contribution":
+    if kind in _PLAIN_CONTRIBUTION_KINDS:
         if severity is not None or about is not None or veto or disposition is not None or evidence_ref is not None:
-            raise ValueError("plain contributions cannot carry concern/resolution fields")
+            raise ValueError("plain contribution kinds cannot carry concern/resolution fields")
         return props
 
     if kind == "concern":
@@ -254,10 +255,12 @@ def contribute(session_id: str, role: str, content: str, peers_read: list[str],
     server ALSO records `peers_present` (who was present at commit) — that is PRESENCE, not a
     proof you incorporated them.
 
-    kind = "contribution" keeps existing callers unchanged. kind="concern" records a typed
-    blocking/warning concern; kind="resolution" records the append-only close attempt for a
-    concern. FIX-VERIFIED and FALSE-POSITIVE resolutions require non-empty evidence_ref, and
-    open_concerns() is the projection publish_final uses to fail closed.
+    kind = "contribution" keeps existing callers unchanged. Plan councils use contribution-like
+    kinds "plan_proposal" and "consensus_plan"; they carry no concern/resolution fields.
+    kind="concern" records a typed blocking/warning concern; kind="resolution" records the
+    append-only close attempt for a concern. FIX-VERIFIED and FALSE-POSITIVE resolutions
+    require non-empty evidence_ref, and open_concerns() is the projection publish_final uses
+    to fail closed.
     """
     if not isinstance(read_version, int) or read_version < 0:
         raise ValueError("read_version must be the non-negative int 'version' from read_session "
