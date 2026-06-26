@@ -1,13 +1,13 @@
-"""CLI -> DCM adapter: runs fleet CLI peers (Codex, Gemini-CLI) as first-class mesh experts,
+"""CLI -> DCM adapter: runs fleet CLI peers (Codex, Claude, Gemini-CLI, Grok) as first-class mesh experts,
 under the SAME staleness gate as Claude-Code, Taey, and (future) the Chats.
 
-Per the fleet_integration council finding: CLIs join via hooks wrapping `codex exec` /
-`gemini -p`, and like every adapter funnel through mesh.contribute(read_version) — the
+Per the fleet_integration council finding: CLIs join via hooks wrapping `codex exec`,
+`claude -p`, `gemini -p`, or `grok -p`, and like every adapter funnel through mesh.contribute(read_version) — the
 adapter owns the read+commit so the CLI can't bypass read-before-write. Closes the
-fleet-capability gap (Codex/Gemini-CLI are full peers, not subprocess tools).
+fleet-capability gap (the four fleet CLIs are full peers, not subprocess tools).
 
 SECURITY (honest, per gatekeeper audit): peer contributions are attacker-influenceable text
-and they are injected into the CLI prompt below, while `codex exec` can take real actions on
+and they are injected into the CLI prompt below, while acting CLIs can take real actions on
 the host. The "do NOT edit any files" line in the prompt is advisory ONLY — it is not an
 enforced sandbox. Run CLI experts on councils whose participants you trust, and/or sandbox
 the CLI (containerize, drop fs/network) before seating it on an untrusted-content mesh. This
@@ -32,7 +32,19 @@ def _run_gemini(prompt: str, timeout: int = 400) -> str:
                        capture_output=True, text=True, timeout=timeout)
     return (p.stdout or "").strip()
 
-_RUNNERS = {"codex": _run_codex, "gemini": _run_gemini}
+def _run_claude(prompt: str, timeout: int = 400) -> str:
+    p = subprocess.run(["claude", "-p", prompt, "--dangerously-skip-permissions"],
+                       cwd="/tmp", stdin=subprocess.DEVNULL,
+                       capture_output=True, text=True, timeout=timeout)
+    return (p.stdout or "").strip()
+
+def _run_grok(prompt: str, timeout: int = 400) -> str:
+    p = subprocess.run(["grok", "-p", prompt, "--always-approve", "--permission-mode", "bypassPermissions"],
+                       cwd="/tmp", stdin=subprocess.DEVNULL,
+                       capture_output=True, text=True, timeout=timeout)
+    return (p.stdout or "").strip()
+
+_RUNNERS = {"codex": _run_codex, "gemini": _run_gemini, "claude": _run_claude, "grok": _run_grok}
 
 def cli_expert(session_id: str, role: str, lens: str, cli: str = "codex", max_retry: int = 4) -> str:
     run = _RUNNERS[cli]

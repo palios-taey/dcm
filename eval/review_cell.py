@@ -68,8 +68,9 @@ def review(instance: dict, patch: str, reviewer_cli: str, timeout_s: int = 900) 
         out = (p.stdout or "") + (p.stderr or "")
         m = re.search(r"VERDICT:\s*(APPROVE|BLOCK)\s*[-—:]?\s*(.*)", out, re.I | re.S)
         if not m:
-            # no parseable verdict -> conservative APPROVE, flagged unparsed (logged, audited)
-            return {"verdict": "approve", "concern": "", "parsed": False, "log": out[-1500:]}
+            # no parseable verdict -> conservative BLOCK, flagged unparsed (logged, audited)
+            return {"verdict": "block", "concern": "Reviewer output did not contain a parseable VERDICT line.",
+                    "parsed": False, "log": out[-1500:]}
         return {"verdict": m.group(1).lower(), "concern": (m.group(2) or "").strip()[:600],
                 "parsed": True, "log": out[-1500:]}
     finally:
