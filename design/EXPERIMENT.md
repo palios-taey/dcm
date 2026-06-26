@@ -75,11 +75,40 @@ Two complementary layers:
 The gates and the council are not competitors — the gates are the floor, the council is the
 team standing on it. Both run with a single agent or the full council.
 
+## Round-2 consult result (5/5) — see `design/ROUND2_SYNTHESIS.md`
+
+A 5-CLI panel (Grok/Perplexity/Claude-MAX verified the code; Gemini/ChatGPT sandbox-limited)
+designed the mix against this repo. **Converged** (≥3 lanes, independent): the function set is
+~5 semantic jobs + producer + a non-voting clerk on a fatter deterministic floor — **fuse
+Memory+Git → Foundation (pre-flight); fuse Fallback+Root-cause → Evasive-repair; Provenance =
+non-voting clerk + floor detection (not a semantic seat)**; resolution is **evidence-gated,
+never a vote, safety-veto unilateral, blind-first then reveal**; ground-runner MUST be a
+different base than the producer; memory/Git is an enforced **citation gate**, not a brief.
+**Count** lands ~6–8 standard, scaling to 12 for high-blast-radius work — settled empirically
+by the ablation, not by argument. The substrate's CAS was confirmed a correct serialization
+primitive against live code.
+
+### What's NOT built yet (build punch-list, from the code audit — ordered)
+1. **Evidence-gated resolution** — the mesh is append-only and `publish_final()` enforces nothing; build typed concern/resolution + **fail-closed `publish_final`** (the #1 item).
+2. **Reconcile `eval/arms.py` roles with this roster** — the ablation can't run until they match.
+3. **Fixture-grading + ablation harness** (feed fixture → role → assert verdict; drop role → measure slip + clean-control false-positives).
+4. **`council.py` is a bookend** — build the real role→CLI conductor (or document the external one honestly).
+5. **Sealed blind round-0** in the substrate (`verify_coordination` exempts it).
+6. **Wire the Grok adapter** (`_RUNNERS` has only codex+gemini).
+7. **`review_cell.py` unparsed verdict → BLOCK/UNVERIFIED**, not `approve` (it currently embodies the silent-fallback mode it audits).
+
+### Safety (before any council runs on untrusted content)
+- **Sandbox the acting CLIs** — `cli_adapter.py` seats an acting `codex exec`/`gemini` on attacker-influenceable peer text; "don't edit files" is advisory, not a sandbox. Run in throwaway, fs/network-dropped containers; refuse to seat an acting CLI on untrusted/ISMA-derived payload.
+- **Close `destructive-ops` at the orchestrator floor** (currently `documented`, not a wired gate); the veto is the net, not the primary defense.
+
 ## How we measure it
 
 The `eval/` harness grades real patches against the objective oracle, with a **sabotage-fixture
-registry** (`eval/sabotage_fixtures.json`) encoding each failure mode as a known-bad input with
-the verdict the council must produce. We measure the council against baselines (producer-only;
-producer + one reviewer) and ablate each expert (drop a role → does anything it caught slip?),
-on a benchmark with **headroom to fail** (not a saturated one). The point is evidence: what the
-council catches that simpler configurations do not, measured, not asserted.
+registry** (`eval/sabotage_fixtures.json`). On a benchmark with **headroom to fail** (SWE-bench
+Live, not saturated Verified):
+- **C-ablation** settles the count — unique-catch per role + clean-control false-positive rate; cut/fuse a role with no unique catch (unless rare-but-high-severity, e.g. the safety veto).
+- **I/D arm contrast** settles whether real-time peer-visible deliberation helps at all — blind (I) vs peer-visible (D); `D−I` isolates the coordination primitive. If I≥D, the mesh is for write-discipline, not deliberation. Let it decide; don't assume D.
+- **Recall-per-mode** (N fixtures per mode) tests the "narrow expert beats broad in-lane" thesis the current 1-per-mode fixtures can't adjudicate.
+- **Bespoke history-rich eval** — memory/Git modes (ignored-prior-solution, regression) **cannot** be measured on SWE-bench (fresh, no ISMA/history); seed tasks from our own repos where the right answer requires citing/superseding a known prior. Until built, that mode is asserted, not measured.
+
+The point is evidence: what the council catches that simpler configurations do not, measured.
