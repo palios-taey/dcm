@@ -23,7 +23,7 @@ Claim labels: [Observed] verified / [Inferred] pattern / [Constraint] hard requi
 
 [Constraint: Observer directive] We are building and going to **measure** a **DCM (Distributed Cognitive Mesh): 6–12 differentiated experts across several CLIs (codex / claude / gemini / grok), deliberating in REAL TIME** on a coding task, using our **ISMA memory**, with roles dedicated to **production/coding · auditing · Git · memory research · targeted failure-mode prevention** (public failure modes + our own observed ones, e.g. silent fallbacks).
 
-[Observed] This is the **Grok-Heavy shape** — xAI's premium tier runs ~12 agents that communicate in real time with different customized functions and resolve to one answer. A shipped production architecture; we are applying it to software engineering. **The architecture is decided; the design question is the MIX and mechanics within it** — not whether to build it.
+[Inferred — from public reports + xAI's shipped product, not independently verified by us] This is the **Grok-Heavy shape** — xAI's premium tier is publicly reported to run ~12 agents that communicate in real time with different customized functions and resolve to one answer. A real shipped production architecture; we are applying it to software engineering. **The architecture is decided; the design question is the MIX and mechanics within it** — not whether to build it.
 
 ### What's built + validated (verify in the repo)
 
@@ -40,7 +40,7 @@ The architecture is fixed (above); what is undetermined is the **mix and mechani
 
 ### Failure modes to cover (public + our observed)
 
-silent-fallback/evasive-repair (our #1) · root-cause-vs-patch bypass · scope-violation (~40%, our top) · destructive-ops on live state · hardcoding/secret-leak · test-tampering · hallucinated-API · regression-reintroduction · ignored-prior-solution (re-derivation — acute in our memory-rich env) · injection · forged-done.
+silent-fallback/evasive-repair · root-cause-vs-patch bypass · scope-violation · destructive-ops on live state · hardcoding/secret-leak · test-tampering · hallucinated-API · regression-reintroduction · ignored-prior-solution (re-derivation — acute in our memory-rich env) · injection · forged-done. [Inferred] silent fallbacks and scope-violations are our most frequent in practice; we don't cite a hard rate here — don't over-weight the ordering.
 
 ### Our environment (shapes the mix)
 
@@ -48,7 +48,7 @@ silent-fallback/evasive-repair (our #1) · root-cause-vs-patch bypass · scope-v
 
 ## Objective — the questions (improve the design in `design/EXPERIMENT.md`)
 
-1. **The experts.** Refine the roster (production/coding · memory + Git research [pre-flight] · auditing / failure-mode-prevention incl. a fallback-hunter · coordination). Which functions earn a seat, how split or fused into 6–12, and on which CLI each — to keep the independent checks decorrelated (not sharing a base-model blind spot)? A role that catches nothing unique across the fixtures can be cut — the mix is open.
+1. **The experts.** Refine the roster (production/coding · memory + Git research [pre-flight] · auditing / failure-mode-prevention · coordination). Which functions earn a seat, how split or fused into 6–12, and on which CLI each — to keep the independent checks decorrelated (not sharing a base-model blind spot)? A role that catches nothing unique across the fixtures can be cut — the mix is open.
 2. **How they work together.** Improve the real-time coordination over the mesh + the **evidence-gated** resolution (a concern is a gate; closes only on evidence — fix+green / execution-trace-vacuous / out-of-scope / consented-risk / escalate-human; safety veto unilateral; no out-voting a failing test). How do experts deliberate live without manufacturing conformity?
 3. **How it layers on the orchestrator + gates.** Get the boundary right: the deterministic gate floor (mechanical, certain, in the orchestrator) vs the real-time semantic council (judgment the gates can't make — root-cause-vs-patch, evasive-repair intent, memory/Git grounding). What belongs in which layer?
 4. **Memory / Git grounding.** Best way to wire ISMA + Git so prior foundations are actually used (pre-flight brief? shared service + provenance gate enforcing citation?) without a lossy hand-off.
