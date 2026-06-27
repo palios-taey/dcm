@@ -15,8 +15,12 @@ is inherent to running an acting agent on shared deliberation; it is documented,
 """
 from __future__ import annotations
 from collections.abc import Callable
-import os, re, subprocess
+import os, re, subprocess, tempfile
 import mesh
+
+# Prompts are fed via stdin / --prompt-file, NEVER as an argv string: a coordinated
+# mesh prompt embeds all peer contributions and routinely exceeds Linux MAX_ARG_STRLEN
+# (128KB per arg) -> "OSError: Argument list too long". stdin / file have no such cap.
 
 
 def _raise_on_failure(cli: str, proc: subprocess.CompletedProcess[str]) -> None:
@@ -27,8 +31,9 @@ def _raise_on_failure(cli: str, proc: subprocess.CompletedProcess[str]) -> None:
 
 
 def _run_codex(prompt: str, timeout: int = 400) -> str:
-    p = subprocess.run(["codex", "exec", "--skip-git-repo-check", prompt],
-                       cwd="/tmp", stdin=subprocess.DEVNULL,
+    # codex exec - reads the prompt from stdin
+    p = subprocess.run(["codex", "exec", "--skip-git-repo-check", "-"],
+                       input=prompt, cwd="/tmp",
                        capture_output=True, text=True, timeout=timeout)
     _raise_on_failure("codex", p)
     out = p.stdout
@@ -40,31 +45,44 @@ def _run_codex(prompt: str, timeout: int = 400) -> str:
 def _run_gemini(prompt: str, timeout: int = 400) -> str:
     env = os.environ.copy()
     env["GEMINI_CLI_TRUST_WORKSPACE"] = "true"
-    p = subprocess.run(["gemini", "-p", prompt], cwd="/tmp", stdin=subprocess.DEVNULL,
+    # gemini reads stdin as input and APPENDS the -p arg; pass the full prompt on
+    # stdin (no argv cap) + a minimal -p pointer. yolo auto-approves so a tool-touch
+    # in headless mode doesn't hang on the approval prompt.
+    p = subprocess.run(["gemini", "-p", "Follow the instructions in the input above and respond.",
+                        "--approval-mode", "yolo"],
+                       input=prompt, cwd="/tmp",
                        capture_output=True, text=True, timeout=timeout, env=env)
     _raise_on_failure("gemini", p)
     return (p.stdout or "").strip()
 
 def _run_claude(prompt: str, timeout: int = 400) -> str:
-    p = subprocess.run(["claude", "-p", prompt, "--dangerously-skip-permissions"],
-                       cwd="/tmp", stdin=subprocess.DEVNULL,
+    # bare `claude -p` reads the prompt from stdin
+    p = subprocess.run(["claude", "-p", "--dangerously-skip-permissions"],
+                       input=prompt, cwd="/tmp",
                        capture_output=True, text=True, timeout=timeout)
     _raise_on_failure("claude", p)
     return (p.stdout or "").strip()
 
 def _run_grok(prompt: str, timeout: int = 400) -> str:
-    p = subprocess.run(["grok", "-p", prompt, "--always-approve", "--permission-mode", "bypassPermissions"],
-                       cwd="/tmp", stdin=subprocess.DEVNULL,
-                       capture_output=True, text=True, timeout=timeout)
-    _raise_on_failure("grok", p)
-    return (p.stdout or "").strip()
+    # grok takes the prompt only as argv (-p) or from a file; use --prompt-file (no argv cap)
+    with tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False) as f:
+        f.write(prompt); path = f.name
+    try:
+        p = subprocess.run(["grok", "--prompt-file", path,
+                            "--always-approve", "--permission-mode", "bypassPermissions"],
+                           cwd="/tmp", stdin=subprocess.DEVNULL,
+                           capture_output=True, text=True, timeout=timeout)
+        _raise_on_failure("grok", p)
+        return (p.stdout or "").strip()
+    finally:
+        os.unlink(path)
 
 _RUNNERS = {"codex": _run_codex, "gemini": _run_gemini, "claude": _run_claude, "grok": _run_grok}
 
 def cli_expert(session_id: str, role: str, lens: str, cli: str = "codex", max_retry: int = 4,
                *, peers_visible: bool = True, prompt_extra: str | None = None,
                parse_contribution: Callable[[str, dict], dict] | None = None,
-               return_record: bool = False) -> str | dict:
+               return_record: bool = False, timeout: int = 400) -> str | dict:
     """Run one CLI expert and commit its output to the mesh.
 
     peers_visible=False is for sealed blind rounds: the adapter still reads the
@@ -89,7 +107,7 @@ def cli_expert(session_id: str, role: str, lens: str, cli: str = "codex", max_re
             f"for each peer you engage — never agree just to converge.")
         if prompt_extra:
             prompt = f"{prompt}\n\n{prompt_extra}"
-        content = run(prompt)
+        content = run(prompt, timeout=timeout)
         typed = parse_contribution(content, ctx) if parse_contribution else {}
         if not isinstance(typed, dict):
             raise TypeError("parse_contribution must return a dict of mesh.contribute keyword arguments")
