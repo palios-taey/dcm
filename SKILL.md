@@ -37,6 +37,15 @@ roster by blast radius with `--tier compress|standard|expand` (3 / 4 / 9 reviewe
 Memory-Scout, Git-Historian, Blast-Shield, Test-Integrity, Dependency/API, Red-Team. Default is the
 4-reviewer standard panel above.
 
+**What if a CLI is down, or you only have Claude Code?** The council degrades, it does not crash. A
+seat whose CLI is down / rate-limited / times out / returns empty **falls back to another installed
+CLI** (reviewers never fall back to the producer base, codex). If only `claude` is installed, every
+seat runs on claude (role-differentiated, gates intact) — and the result's `ledger.decorrelation`
+field says **`single-model`** with a note, because you've lost cross-model diversity, which is DCM's
+main value. So a Claude-Code-only operator gets a working but honestly-degraded council, never a
+traceback. Check `decorrelation.status` (`decorrelated` / `partial-decorrelation` / `single-model`)
+to know what you actually got.
+
 ## What the council does to your input (so you trust the answer)
 Foundation pre-flight grounding → cite-or-block citation gate → destructive-ops floor scan → blind
 round (each expert alone) → reveal + evidence-gated resolution → publish. A concern closes only on

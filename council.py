@@ -115,6 +115,27 @@ def canonical_reviewer_roster() -> dict:
     return _default_roster()[0]
 
 
+def _reviewer_fallbacks() -> tuple[str, ...]:
+    """CLIs a reviewer/grounding/planning seat may fall back to when its own CLI is down/rate-limited:
+    every INSTALLED cli except the producer base 'codex' (reviewers stay decorrelated from the
+    producer). So Gemini rate-limiting degrades a seat to claude/grok instead of crashing the council.
+    Empty if nothing non-producer is installed → the seat fails with a clear message, not a traceback."""
+    return tuple(c for c in cli_adapter.available_clis() if c != "codex")
+
+
+def _decorrelation(blind_round: list[dict]) -> dict:
+    """Honest report of the model diversity this run ACTUALLY achieved, after any CLI fallbacks.
+    DCM's value is cross-model decorrelation; if seats collapsed onto one model (a down fleet, or a
+    Claude-Code-only operator), the verdict must say so rather than imply a full multi-model panel."""
+    clis = [b.get("cli") for b in blind_round if b.get("cli")]
+    distinct = sorted(set(clis))
+    status = ("single-model" if len(distinct) <= 1 else
+              "partial-decorrelation" if len(distinct) == 2 else "decorrelated")
+    note = ("SINGLE MODEL — no cross-model decorrelation (role-differentiated but a degraded form "
+            "of DCM; the experts share one model's blind spots)") if len(distinct) <= 1 else None
+    return {"clis_used": clis, "distinct_models": distinct, "status": status, "note": note}
+
+
 def _normalize_roster(roster: dict | None) -> tuple[dict, dict]:
     roles, clerk = _default_roster()
     if roster is not None:
@@ -267,7 +288,8 @@ def _run_preflight(session_id: str, roles: dict, task: str, ledger: dict) -> str
         record = cli_adapter.cli_expert(
             session_id, f"{role}:preflight", _preflight_lens(spec, task), cli=spec["cli"],
             peers_visible=False, prompt_extra=_preflight_prompt_extra(),
-            parse_contribution=_grounding_contribution_props(), return_record=True)
+            parse_contribution=_grounding_contribution_props(), return_record=True,
+            fallbacks=_reviewer_fallbacks())
         manifest = record["content"].strip()
         parts.append(f"[{role}]\n{manifest}")
         ledger["preflight"].append({"role": role, "contrib_id": record["contrib_id"], "manifest": manifest})
@@ -682,14 +704,15 @@ def council_review(task: str, artifact: str, rules: str, roster: dict | None = N
         record = cli_adapter.cli_expert(
             session_id, role, _lens_with_rules(spec, task, grounded_rules), cli=spec["cli"],
             peers_visible=False, prompt_extra=_blind_prompt_extra(),
-            parse_contribution=_review_contribution_props(role), return_record=True)
+            parse_contribution=_review_contribution_props(role), return_record=True,
+            fallbacks=_reviewer_fallbacks())
         session = mesh.read_session(session_id)
         contrib = _contribution_by_id(session, record["contrib_id"])
         parsed = _parse_review_output(record["content"])
         blind = {"contrib_id": record["contrib_id"], "kind": contrib["kind"],
                  "severity": contrib.get("severity"), "about": contrib.get("about"),
                  "veto": contrib.get("veto"), "peers_read": record["peers_read"],
-                 "parsed": parsed}
+                 "cli": record.get("cli"), "parsed": parsed}
         per_role[role]["blind"] = blind
         ledger["blind_round"].append({"role": role, **blind})
         ledger["clerk"]["actions"].append(
@@ -705,7 +728,8 @@ def council_review(task: str, artifact: str, rules: str, roster: dict | None = N
         record = cli_adapter.cli_expert(
             session_id, f"{role}:resolver", _lens_with_rules(spec, task, rules),
             cli=spec["cli"], peers_visible=True, prompt_extra=_resolution_prompt_extra(concern),
-            parse_contribution=_resolution_contribution_props(concern), return_record=True)
+            parse_contribution=_resolution_contribution_props(concern), return_record=True,
+            fallbacks=_reviewer_fallbacks())
         session = mesh.read_session(session_id)
         contrib = _contribution_by_id(session, record["contrib_id"])
         parsed = _parse_resolution_output(record["content"])
@@ -732,6 +756,7 @@ def council_review(task: str, artifact: str, rules: str, roster: dict | None = N
         ledger["publish"] = {"status": "blocked", "error": str(exc)}
     ledger["coordination"] = {"blind_round_claims_empty_by_design": True,
                               "mesh_verify": mesh.verify_coordination(session_id)}
+    ledger["decorrelation"] = _decorrelation(ledger["blind_round"])
     ledger["classification_counts"] = dict(counts)
     return {"verdict": verdict, "open_concerns": open_concerns,
             "ledger": ledger, "per_role": per_role}
@@ -765,7 +790,8 @@ def council_plan(problem: str, rules: str, roster: dict | None = None) -> dict:
         record = cli_adapter.cli_expert(
             session_id, role, _plan_lens_with_rules(role, spec, problem, rules),
             cli=spec["cli"], peers_visible=False, prompt_extra=_plan_blind_prompt_extra(role),
-            parse_contribution=_plan_proposal_props(role), return_record=True)
+            parse_contribution=_plan_proposal_props(role), return_record=True,
+            fallbacks=_reviewer_fallbacks())
         session = mesh.read_session(session_id)
         contrib = _contribution_by_id(session, record["contrib_id"])
         if contrib["kind"] != "plan_proposal":
@@ -776,7 +802,7 @@ def council_plan(problem: str, rules: str, roster: dict | None = None) -> dict:
             raise RuntimeError(f"plan proposal {record['contrib_id']} from {role} was empty")
         per_role[role] = proposal
         blind = {"role": role, "contrib_id": record["contrib_id"], "kind": contrib["kind"],
-                 "peers_read": record["peers_read"], "content": proposal}
+                 "peers_read": record["peers_read"], "cli": record.get("cli"), "content": proposal}
         ledger["blind_round"].append(blind)
         ledger["clerk"]["actions"].append(
             f"recorded blind plan_proposal from {role} as {record['contrib_id']}")
@@ -792,7 +818,8 @@ def council_plan(problem: str, rules: str, roster: dict | None = None) -> dict:
     record = cli_adapter.cli_expert(
         session_id, "clerk:synthesizer", synth_lens, cli=synth_spec["cli"],
         peers_visible=True, prompt_extra=_consensus_prompt_extra(),
-        parse_contribution=_consensus_plan_props, return_record=True)
+        parse_contribution=_consensus_plan_props, return_record=True,
+        fallbacks=_reviewer_fallbacks())
     session = mesh.read_session(session_id)
     contrib = _contribution_by_id(session, record["contrib_id"])
     if contrib["kind"] != "consensus_plan":
@@ -813,6 +840,7 @@ def council_plan(problem: str, rules: str, roster: dict | None = None) -> dict:
     ledger["coordination"] = {"blind_round_claims_empty_by_design": True,
                               "reveal_round_peers_visible": True,
                               "mesh_verify": mesh.verify_coordination(session_id)}
+    ledger["decorrelation"] = _decorrelation(ledger["blind_round"])
     return {"plan": consensus_plan, "per_role": per_role, "ledger": ledger}
 
 

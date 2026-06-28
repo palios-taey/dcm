@@ -15,8 +15,20 @@ is inherent to running an acting agent on shared deliberation; it is documented,
 """
 from __future__ import annotations
 from collections.abc import Callable
-import os, re, subprocess, tempfile
+import os, re, shutil, subprocess, tempfile
 import mesh
+
+
+class CliRunError(RuntimeError):
+    """A CLI expert could not produce a usable contribution this attempt — the binary is missing,
+    exited non-zero (down / rate-limited), timed out, or returned empty. Distinct from StaleReadError
+    (mesh CAS, retry same CLI): a CliRunError means try a DIFFERENT CLI for this seat, or degrade."""
+
+
+def available_clis() -> list[str]:
+    """Which expert CLIs are actually installed on PATH (in _RUNNERS preference order). A council
+    seats from these; a missing CLI is not a crash, it's just not in the fallback pool."""
+    return [c for c in _RUNNERS if shutil.which(c)]
 
 # Prompts are fed via stdin / --prompt-file, NEVER as an argv string: a coordinated
 # mesh prompt embeds all peer contributions and routinely exceeds Linux MAX_ARG_STRLEN
@@ -27,7 +39,7 @@ def _raise_on_failure(cli: str, proc: subprocess.CompletedProcess[str]) -> None:
     if proc.returncode == 0:
         return
     out = ((proc.stdout or "") + (("\n[STDERR]\n" + proc.stderr) if proc.stderr else "")).strip()
-    raise RuntimeError(f"{cli} exited {proc.returncode}:\n{out[-2000:]}")
+    raise CliRunError(f"{cli} exited {proc.returncode}:\n{out[-2000:]}")
 
 
 def _run_codex(prompt: str, timeout: int = 400) -> str:
@@ -87,54 +99,70 @@ _RUNNERS = {"codex": _run_codex, "gemini": _run_gemini, "claude": _run_claude, "
 def cli_expert(session_id: str, role: str, lens: str, cli: str = "codex", max_retry: int = 4,
                *, peers_visible: bool = True, prompt_extra: str | None = None,
                parse_contribution: Callable[[str, dict], dict] | None = None,
-               return_record: bool = False, timeout: int = 400) -> str | dict:
+               return_record: bool = False, timeout: int = 400,
+               fallbacks: tuple[str, ...] = ()) -> str | dict:
     """Run one CLI expert and commit its output to the mesh.
 
-    peers_visible=False is for sealed blind rounds: the adapter still reads the
-    session version needed for CAS, but the CLI prompt receives no peer content
-    and the mesh contribution honestly claims no peer reads.
+    Tries `cli` first, then each distinct entry in `fallbacks` if the CLI is unavailable / down /
+    rate-limited / times out / returns empty (a CliRunError) — one CLI being down DEGRADES to
+    another, it does not crash the council. StaleReadError (mesh CAS) retries the SAME CLI. The
+    returned record includes "cli" = the CLI that actually produced the contribution.
+
+    peers_visible=False is a sealed blind round: no peer content in the prompt, no claimed reads.
     """
-    run = _RUNNERS[cli]
-    for _ in range(max_retry):
-        ctx = mesh.read_session(session_id)
-        visible_peers = ctx["contributions"] if peers_visible else []
-        peers_txt = "\n\n".join(f"[{c['role']}] {c['content']}" for c in visible_peers) or "(none yet)"
-        peer_header = "PEER CONTRIBUTIONS (build on / sharpen / disagree - do NOT restate, do NOT edit any files)"
-        if not peers_visible:
-            peer_header = "PEER CONTRIBUTIONS (sealed blind round - hidden from this expert)"
-        prompt = (
-            f"You are a DCM (Distributed Cognitive Mesh) council expert. LENS: {lens}\n\n"
-            f"SESSION TOPIC:\n{ctx['topic']}\n\n"
-            f"SHARED ARTIFACT:\n{ctx['payload']}\n\n"
-            f"{peer_header}:\n{peers_txt}\n\n"
-            f"Output ONLY your contribution text through your lens — concise, dense, additive. GROUNDED form: "
-            f"each CLAIM with its GROUND, and an explicit STANCE (Agree/Disagree/Extend) with justification "
-            f"for each peer you engage — never agree just to converge.")
-        if prompt_extra:
-            prompt = f"{prompt}\n\n{prompt_extra}"
-        content = run(prompt, timeout=timeout)
-        # Fail-closed on an EMPTY model call: a CLI that refuses headlessly and exits 0 (e.g. an
-        # untrusted-dir refusal) returns empty stdout — committing it would be a SILENT model-call
-        # failure (the README forbids silent fallbacks for failed model calls). Raise, never commit
-        # an empty contribution. (Found by dogfooding the first real council — gemini exit-0 empty.)
-        if not content or not content.strip():
-            raise RuntimeError(
-                f"CLI {cli!r} (role {role!r}) returned EMPTY output — a silent model-call failure "
-                f"(headless refusal / exit-0 with no stdout). Refusing to commit an empty contribution.")
-        typed = parse_contribution(content, ctx) if parse_contribution else {}
-        if not isinstance(typed, dict):
-            raise TypeError("parse_contribution must return a dict of mesh.contribute keyword arguments")
-        peers = [c["contrib_id"] for c in visible_peers]
-        try:
-            cid = mesh.contribute(session_id, role, content, peers_read=peers,
-                                  read_version=ctx["version"], **typed)
-            if return_record:
-                return {"contrib_id": cid, "content": content, "peers_read": peers,
-                        "read_version": ctx["version"], "typed": typed}
-            return cid
-        except mesh.StaleReadError:
+    candidates = [cli] + [c for c in fallbacks if c and c != cli]
+    attempts: list[str] = []
+    for current in candidates:
+        run = _RUNNERS.get(current)
+        if run is None or shutil.which(current) is None:
+            attempts.append(f"{current}=unavailable")
             continue
-    raise RuntimeError(f"CLI expert {role} ({cli}) could not land after {max_retry} retries")
+        try:
+            for _ in range(max_retry):
+                ctx = mesh.read_session(session_id)
+                visible_peers = ctx["contributions"] if peers_visible else []
+                peers_txt = "\n\n".join(f"[{c['role']}] {c['content']}" for c in visible_peers) or "(none yet)"
+                peer_header = "PEER CONTRIBUTIONS (build on / sharpen / disagree - do NOT restate, do NOT edit any files)"
+                if not peers_visible:
+                    peer_header = "PEER CONTRIBUTIONS (sealed blind round - hidden from this expert)"
+                prompt = (
+                    f"You are a DCM (Distributed Cognitive Mesh) council expert. LENS: {lens}\n\n"
+                    f"SESSION TOPIC:\n{ctx['topic']}\n\n"
+                    f"SHARED ARTIFACT:\n{ctx['payload']}\n\n"
+                    f"{peer_header}:\n{peers_txt}\n\n"
+                    f"Output ONLY your contribution text through your lens — concise, dense, additive. GROUNDED form: "
+                    f"each CLAIM with its GROUND, and an explicit STANCE (Agree/Disagree/Extend) with justification "
+                    f"for each peer you engage — never agree just to converge.")
+                if prompt_extra:
+                    prompt = f"{prompt}\n\n{prompt_extra}"
+                try:
+                    content = run(prompt, timeout=timeout)
+                except subprocess.TimeoutExpired as exc:
+                    raise CliRunError(f"{current} timed out after {timeout}s") from exc
+                # Fail-closed on an EMPTY model call (e.g. a headless refusal that exits 0): committing
+                # it would be a silent model-call failure. Treat as a CLI failure → try the next CLI.
+                if not content or not content.strip():
+                    raise CliRunError(
+                        f"{current!r} (role {role!r}) returned EMPTY output — silent model-call failure "
+                        f"(headless refusal / exit-0 no stdout). Not committing empty.")
+                typed = parse_contribution(content, ctx) if parse_contribution else {}
+                if not isinstance(typed, dict):
+                    raise TypeError("parse_contribution must return a dict of mesh.contribute keyword arguments")
+                peers = [c["contrib_id"] for c in visible_peers]
+                try:
+                    cid = mesh.contribute(session_id, role, content, peers_read=peers,
+                                          read_version=ctx["version"], **typed)
+                    if return_record:
+                        return {"contrib_id": cid, "content": content, "peers_read": peers,
+                                "read_version": ctx["version"], "typed": typed, "cli": current}
+                    return cid
+                except mesh.StaleReadError:
+                    continue
+            raise CliRunError(f"{current}: could not land after {max_retry} CAS retries")
+        except (CliRunError, FileNotFoundError) as exc:
+            attempts.append(f"{current}={type(exc).__name__}")
+            continue
+    raise CliRunError(f"role {role!r}: no CLI produced a contribution; tried [{', '.join(attempts)}]")
 
 if __name__ == "__main__":
     import sys
