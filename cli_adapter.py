@@ -37,10 +37,14 @@ def _run_codex(prompt: str, timeout: int = 400) -> str:
                        capture_output=True, text=True, timeout=timeout)
     _raise_on_failure("codex", p)
     out = p.stdout
-    # codex echoes the final answer after the trailing "tokens used\n<n>" footer
-    tail = out.rsplit("tokens used", 1)[-1]
-    tail = re.sub(r"^\s*\d[\d,]*\s*", "", tail).strip()  # drop the token-count line
-    return tail or out.strip()
+    # codex echoes the final answer after the trailing "tokens used\n<n>" footer.
+    # If the footer is present, return ONLY the post-footer answer (even if empty —
+    # an empty answer is honest); do NOT silently substitute the full raw stdout
+    # (reasoning trace + banner) when the post-footer is empty.
+    if "tokens used" in out:
+        tail = out.rsplit("tokens used", 1)[-1]
+        return re.sub(r"^\s*\d[\d,]*\s*", "", tail).strip()  # drop the token-count line
+    return out.strip()  # no footer -> nothing to strip
 
 def _run_gemini(prompt: str, timeout: int = 400) -> str:
     env = os.environ.copy()
