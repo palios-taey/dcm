@@ -23,29 +23,33 @@ import json
 import council
 
 
-def _emit(result: dict) -> int:
-    verdict = result["verdict"]
-    final = verdict.get("final") or verdict.get("final_candidate")
-    print("=== STATUS:", verdict["status"], "===\n")
-    print(final or json.dumps(verdict, indent=2, default=str))
-    coord = result.get("ledger", {}).get("coordination")
+def _emit(status: str, body: str, ledger: dict) -> int:
+    print("=== STATUS:", status, "===\n")
+    print(body)
+    coord = (ledger or {}).get("coordination")
     if coord is not None:
         print("\n=== COORDINATION (honest) ===")
         print(json.dumps(coord, indent=2, default=str))
-    # blocked review / unpublished plan is a non-zero exit so a caller's pipeline halts on it.
-    return 0 if verdict["status"] == "published" else 1
+    # not-published is a non-zero exit so a caller's pipeline halts on it.
+    return 0 if status == "published" else 1
 
 
 def _plan(args) -> int:
     problem = open(args.problem_file).read()
     rules = open(args.rules_file).read()
-    return _emit(council.council_plan(problem, rules))
+    r = council.council_plan(problem, rules)          # -> {"plan", "per_role", "ledger"}
+    ledger = r.get("ledger", {})
+    status = (ledger.get("publish") or {}).get("status", "unknown")
+    return _emit(status, r.get("plan") or "(no consensus plan produced)", ledger)
 
 
 def _review(args) -> int:
     artifact = open(args.artifact_file).read()
     rules = open(args.rules_file).read()
-    return _emit(council.council_review(args.task, artifact, rules, tier=args.tier))
+    r = council.council_review(args.task, artifact, rules, tier=args.tier)  # -> {"verdict", ...}
+    v = r["verdict"]
+    body = v.get("final") or v.get("final_candidate") or json.dumps(v, indent=2, default=str)
+    return _emit(v["status"], body, r.get("ledger", {}))
 
 
 def main() -> int:
