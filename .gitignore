@@ -2,6 +2,4 @@ __pycache__/
 *.pyc
 .venv/
 reference/
-AGENTS.md
-CLAUDE.md
 .claude/
