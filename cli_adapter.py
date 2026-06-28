@@ -47,15 +47,16 @@ def _run_codex(prompt: str, timeout: int = 400) -> str:
     return out.strip()  # no footer -> nothing to strip
 
 def _run_gemini(prompt: str, timeout: int = 400) -> str:
-    env = os.environ.copy()
-    env["GEMINI_CLI_TRUST_WORKSPACE"] = "true"
-    # gemini reads stdin as input and APPENDS the -p arg; pass the full prompt on
-    # stdin (no argv cap) + a minimal -p pointer. yolo auto-approves so a tool-touch
-    # in headless mode doesn't hang on the approval prompt.
+    # gemini reads stdin as input and APPENDS the -p arg; pass the full prompt on stdin (no argv
+    # cap) + a minimal -p pointer. --skip-trust is REQUIRED: gemini refuses an untrusted workspace
+    # headlessly, and depending on version either HANGS on the interactive trust prompt (stdin is
+    # the prompt, so the y/n never comes → timeout) or returns EMPTY stdout exit-0. The
+    # GEMINI_CLI_TRUST_WORKSPACE env var is NOT honored (verified: it hung). --approval-mode yolo
+    # auto-approves so a tool-touch doesn't hang either. (Found by dogfooding the first real council.)
     p = subprocess.run(["gemini", "-p", "Follow the instructions in the input above and respond.",
-                        "--approval-mode", "yolo"],
+                        "--approval-mode", "yolo", "--skip-trust"],
                        input=prompt, cwd="/tmp",
-                       capture_output=True, text=True, timeout=timeout, env=env)
+                       capture_output=True, text=True, timeout=timeout)
     _raise_on_failure("gemini", p)
     return (p.stdout or "").strip()
 
@@ -112,6 +113,14 @@ def cli_expert(session_id: str, role: str, lens: str, cli: str = "codex", max_re
         if prompt_extra:
             prompt = f"{prompt}\n\n{prompt_extra}"
         content = run(prompt, timeout=timeout)
+        # Fail-closed on an EMPTY model call: a CLI that refuses headlessly and exits 0 (e.g. an
+        # untrusted-dir refusal) returns empty stdout — committing it would be a SILENT model-call
+        # failure (the README forbids silent fallbacks for failed model calls). Raise, never commit
+        # an empty contribution. (Found by dogfooding the first real council — gemini exit-0 empty.)
+        if not content or not content.strip():
+            raise RuntimeError(
+                f"CLI {cli!r} (role {role!r}) returned EMPTY output — a silent model-call failure "
+                f"(headless refusal / exit-0 with no stdout). Refusing to commit an empty contribution.")
         typed = parse_contribution(content, ctx) if parse_contribution else {}
         if not isinstance(typed, dict):
             raise TypeError("parse_contribution must return a dict of mesh.contribute keyword arguments")
