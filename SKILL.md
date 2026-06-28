@@ -42,6 +42,14 @@ Foundation pre-flight grounding → cite-or-block citation gate → destructive-
 round (each expert alone) → reveal + evidence-gated resolution → publish. A concern closes only on
 evidence; the safety veto is unilateral; you cannot out-vote a failing check.
 
+## Put the real ground truth IN your rules file — the council can't see your environment
+The council grounds ONLY on your problem + rules files (plus the experts' training). It does **not**
+have access to your databases, schemas, connection strings, or architecture. If your rules omit the
+real ones, the experts will assume plausible defaults and produce a plan that **fails on your actual
+infra** (observed: a plan wrote to the wrong DB because the rules never named the right one). So your
+rules file must spell out the exact connection strings, schema/labels, the wrapper commands to use,
+and any hard architecture constraints (e.g. a required review gate). Garbage-in → confident-wrong-out.
+
 ## Three things to know before you rely on a run
 - **Trusted content only.** The CLIs run full-access — there is no sandbox. Do not feed a council
   untrusted/attacker-influenceable content.
