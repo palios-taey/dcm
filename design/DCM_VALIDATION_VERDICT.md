@@ -28,6 +28,13 @@ Direct multi-lens audits of existing application drivers (such as `internal-app`
 - **Finding C (Secrets Leak)**: Plaintext production test credentials (`<credential>`) were found committed in readiness scripts.
 - **Finding D (PII Leak)**: Live accessibility trees committed as test fixtures contained private personal conversations and browser state.
 
+### D. All-platform rebuild, judged by-execution by an independent judge
+The DCM rebuilt 5 consult drivers (one per platform), each judged independently by the consult-engine owner via REAL production consults + screen/clipboard ground truth (the engine's own ok/fail status is unreliable — false-negatives from a stale display-process-PID race), NO synthetic prompts. Verdict:
+- **3 of 5 PASS by-execution**: the deep-research driver extracted a full 60-source report on a cold-started display; the cleaned driver kills two banned shapes (a retry-loop and an over-broad send-block) with output parity to the prior code; the third's extraction completes with real content instead of failing closed.
+- **1 PARTIAL** — mode-engagement works on screen, but the independent judge caught a **blocking interface-breaking change** the DCM producer introduced (a selection-menu rename breaking the standing `--select` contract for all callers/docs) plus an unfixed extraction path. A real regression, surfaced by the independent judge before merge.
+- **1 inconclusive** in this round.
+This is the core result both ways: the DCM produced independently-validated working fixes for most targets, AND the independent judgment caught a real regression a DCM producer introduced — neither a clean sweep nor a failure.
+
 ---
 
 ## 2. Benchmark Evaluation & Performance Scoping [Observed & Inferred]
