@@ -29,8 +29,8 @@ Config is one env group: `DCM_NEO4J_URI` (default `bolt://localhost:7687`), `DCM
 
 ## Common commands
 ```bash
-python platform_dcm.py audit --diff-file <patch> --topic "<what>" \
-  --seats "root-cause:grok,scope-blast:gemini,fallback-hunter:claude"
+python platform_dcm.py audit --diff-file <patch> --topic "<what>"   # seats the canonical §4 roster
+#   add --seats "role:cli,..." ONLY for a deliberate scoped subset; default = the full roster
 python platform_dcm.py produce --target-repo <worktree> --prompt-file <prompt>
 python mesh_cli.py start "<topic>" "<payload>"        # -> session_id
 python mesh_cli.py read <session_id>                  # peers + version (read before you write)

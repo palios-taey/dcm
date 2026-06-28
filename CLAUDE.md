@@ -29,8 +29,8 @@ Env (the only config): `DCM_NEO4J_URI` (default `bolt://localhost:7687`), `DCM_N
 ## Common commands
 ```bash
 # run a blind N-seat audit of a diff (real CLIs through the mesh)
-python platform_dcm.py audit --diff-file <patch> --topic "<what>" \
-  --seats "root-cause:grok,scope-blast:gemini,fallback-hunter:claude"
+python platform_dcm.py audit --diff-file <patch> --topic "<what>"   # seats the canonical §4 roster
+#   add --seats "role:cli,..." ONLY for a deliberate scoped subset; default = the full roster
 # run a producer that implements + verifies on real runs (no synthetic tests)
 python platform_dcm.py produce --target-repo <worktree> --prompt-file <prompt>
 # drive the mesh directly

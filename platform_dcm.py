@@ -9,22 +9,33 @@ Subcommands:
   produce  --target-repo <wt> --prompt-file <f> [--model gpt-5.5]
              run a producer (codex) in the target worktree from a prompt file (no synthetic tests;
              the producer verifies on real production runs — production is the oracle).
-  audit    --diff-file <patch> --topic <str> [--seats root-cause:grok,scope-blast:gemini,fallback-hunter:claude]
-             seat a blind N-lens diff audit through the mesh; prints one VERDICT line per seat.
+  audit    --diff-file <patch> --topic <str> [--seats role:cli,... (scoped override)]
+             seat a blind diff audit through the mesh on the CANONICAL §4 reviewer roster
+             (council.canonical_reviewer_roster) + consult-driver banned-shape emphasis;
+             prints one VERDICT line per seat. --seats overrides to a deliberate subset.
 
 Substrate: mesh.py + cli_adapter.py (this repo). The producer edits the TARGET repo (its driver code
 legitimately lives there); this orchestration + its record live HERE, in the public dcm repo.
 """
 import os, sys, argparse, subprocess, re, json, concurrent.futures as cf
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import mesh, cli_adapter
+import mesh, cli_adapter, council
 
-_DEFAULT_SEATS = "root-cause:grok,scope-blast:gemini,fallback-hunter:claude"
-_LENS = {
-    "root-cause":      "ROOT-CAUSE/6SIGMA: is the fix root-cause (SIMPLIFIES — corrects the upstream shape) or a patch (adds a branch to bypass)? Reject hidden retries/settle-polls disguised as observation.",
-    "scope-blast":     "SCOPE+BLAST: does the diff stay in declared scope? Do shared-file edits risk regressing OTHER consumers? Flag merge-reconciliation risk, destructive ops, secrets, injection.",
-    "fallback-hunter": "FALLBACK-HUNTER: any banned shape — silent fallback, settle-poll-until-present, action-retry, swallowed error, fabricated/seeded state, positive-completion-marker, coord-click? The fix must OBSERVE, never fabricate or re-ACT.",
+# Seats come from council.canonical_reviewer_roster() (the §4 roster — single source of truth);
+# this audit never redefines the roster. It ADDS consult-driver banned-shape emphasis per canonical
+# role so the diff audit keeps its domain teeth. --seats overrides only for a deliberate scoped run.
+# ROUND2_SYNTHESIS.md §4 + §5 item 2 (reconcile the harness to the design roster).
+_AUDIT_ADDENDUM = {
+    "evasive-repair": " CONSULT-DRIVER BANNED SHAPES: silent fallback, settle-poll-until-present, "
+                      "action-retry, swallowed error, fabricated/seeded state, positive-completion-marker, "
+                      "coord-click. The fix must OBSERVE, never fabricate or re-ACT; root-cause (SIMPLIFIES "
+                      "the upstream shape), never a patch (adds a branch to bypass).",
+    "scope-blast":    " CONSULT-DRIVER SCOPE/BLAST: does the diff stay in declared scope? Do shared-file "
+                      "edits risk regressing OTHER consumers? Flag merge-reconciliation risk, destructive "
+                      "ops, secrets, injection.",
 }
+_VERDICT_INSTR = (" End with EXACTLY ONE line: 'VERDICT: PASS' | 'VERDICT: CONCERN-WARN <x>' | "
+                  "'VERDICT: CONCERN-BLOCK <x>'.")
 
 def produce(args):
     prompt = open(args.prompt_file).read()
@@ -34,24 +45,41 @@ def produce(args):
                        input=prompt, text=True)
     sys.exit(p.returncode)
 
-def _seat(sid, role, cli):
-    lens = _LENS.get(role, f"{role} reviewer. End with exactly one VERDICT line.")
-    lens += " End with EXACTLY ONE line: 'VERDICT: PASS' | 'VERDICT: CONCERN-WARN <x>' | 'VERDICT: CONCERN-BLOCK <x>'."
+def _seat(sid, role, cli, lens):
     try:
         r = cli_adapter.cli_expert(sid, role, lens, cli=cli, peers_visible=False, return_record=True, timeout=args_timeout)
         return (role, cli, "ok", r["contrib_id"])
     except Exception as e:
         return (role, cli, "FAIL", f"{type(e).__name__}: {e}")
 
+def _audit_seats(seats_override: str | None) -> dict:
+    """Return {role: (cli, full_lens)} seated from the canonical §4 roster (single source of
+    truth), each lens = canonical reviewer lens + consult-driver addendum + the verdict line.
+    seats_override ('role:cli,role:cli') is a deliberate scoped subset, still lensed canonically."""
+    roster = council.canonical_reviewer_roster()
+    def full_lens(role, base):
+        return base + _AUDIT_ADDENDUM.get(role, "") + _VERDICT_INSTR
+    if seats_override:
+        out = {}
+        for s in seats_override.split(","):
+            if not s:
+                continue
+            role, cli = s.split(":", 1)
+            base = roster.get(role, {}).get("lens", f"You are the {role} reviewer.")
+            out[role] = (cli, full_lens(role, base))
+        return out
+    return {role: (spec["cli"], full_lens(role, spec["lens"])) for role, spec in roster.items()}
+
 def audit(args):
     global args_timeout; args_timeout = args.timeout
     diff = open(args.diff_file).read()
-    seats = [s.split(":", 1) for s in args.seats.split(",") if s]
+    seats = _audit_seats(args.seats)
     payload = (f"Blind diff audit — topic: {args.topic}. Verify the change below on the diff itself.\n\n=== DIFF ===\n" + diff)
-    sid = mesh.start_session(f"AUDIT::{args.topic}", payload, roles=[r for r, _ in seats])
+    sid = mesh.start_session(f"AUDIT::{args.topic}", payload, roles=list(seats))
     print("audit session:", sid)
+    print("roster:", ", ".join(f"{r}:{c}" for r, (c, _) in seats.items()))
     with cf.ThreadPoolExecutor(max_workers=len(seats)) as ex:
-        for f in [ex.submit(_seat, sid, r, c) for r, c in seats]:
+        for f in [ex.submit(_seat, sid, r, c, lens) for r, (c, lens) in seats.items()]:
             print(f.result())
     d = mesh.read_session(sid)
     print("=== VERDICTS ===")
@@ -63,7 +91,7 @@ def main():
     p = argparse.ArgumentParser(description=__doc__)
     sub = p.add_subparsers(dest="cmd", required=True)
     pp = sub.add_parser("produce"); pp.add_argument("--target-repo", required=True); pp.add_argument("--prompt-file", required=True); pp.add_argument("--model", default="gpt-5.5"); pp.set_defaults(fn=produce)
-    pa = sub.add_parser("audit"); pa.add_argument("--diff-file", required=True); pa.add_argument("--topic", required=True); pa.add_argument("--seats", default=_DEFAULT_SEATS); pa.add_argument("--timeout", type=int, default=400); pa.set_defaults(fn=audit)
+    pa = sub.add_parser("audit"); pa.add_argument("--diff-file", required=True); pa.add_argument("--topic", required=True); pa.add_argument("--seats", default=None, help="optional scoped override 'role:cli,...'; default = the canonical §4 roster"); pa.add_argument("--timeout", type=int, default=400); pa.set_defaults(fn=audit)
     a = p.parse_args(); a.fn(a)
 
 if __name__ == "__main__":

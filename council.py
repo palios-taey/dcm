@@ -107,6 +107,14 @@ def _default_roster() -> tuple[dict, dict]:
     return copy.deepcopy(_literal_from_arms("ROLES")), copy.deepcopy(_literal_from_arms("CLERK"))
 
 
+def canonical_reviewer_roster() -> dict:
+    """The §4 converged reviewer roster (role -> {seat, cli, lens}) — the SINGLE source of
+    truth for who seats a DCM review/audit. council_review/council_plan and any external
+    caller (platform_dcm) seat THIS, never an ad-hoc per-call role list, so every entry point
+    runs the same canonical mix. ROUND2_SYNTHESIS.md §4 + §5 item 2."""
+    return _default_roster()[0]
+
+
 def _normalize_roster(roster: dict | None) -> tuple[dict, dict]:
     roles, clerk = _default_roster()
     if roster is not None:
