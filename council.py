@@ -49,7 +49,7 @@ _ROLE_ALLOWED_CLIS = {
     "evasive-repair": {"grok"},
     "scope-blast": {"gemini", "grok"},
 }
-_RESOLUTION_DISPOSITIONS = {"FIX-VERIFIED", "FALSE-POSITIVE", "OUT-OF-SCOPE", "ESCALATE"}
+_RESOLUTION_DISPOSITIONS = {"FIX-VERIFIED", "FALSE-POSITIVE", "OUT-OF-SCOPE", "ACCEPTED-RISK", "ESCALATE"}
 _EVIDENCE_REQUIRED = {"FIX-VERIFIED", "FALSE-POSITIVE"}
 _CLASSIFICATIONS = {"ALLOWED_RESCAN", "BANNED_SETTLE_POLL", "UNKNOWN"}
 _PLAN_ROLE_CONTRACTS = {
@@ -386,11 +386,27 @@ def _contribution_by_id(session: dict, contrib_id: str) -> dict:
 def _classification_counts(per_role: dict) -> Counter:
     counts = Counter()
     for data in per_role.values():
-        blind = data.get("blind", {})
-        parsed = blind.get("parsed", {})
-        if parsed.get("parsed") and parsed.get("classification") != "UNKNOWN":
-            counts[parsed["classification"]] += 1
+        blind = (data or {}).get("blind") or {}   # incomplete role -> data may be None
+        parsed = blind.get("parsed") or {}
+        cls = parsed.get("classification")        # may be absent on an incomplete parse
+        if parsed.get("parsed") and cls and cls != "UNKNOWN":
+            counts[cls] += 1
     return counts
+
+
+def _review_verdict(per_role: dict, open_concerns: list[dict]) -> str:
+    """The actual review verdict (NOT the content-pattern classification).
+    Fail-closed on open block-concerns; else the consensus of expert statuses."""
+    if open_concerns:
+        return "BLOCKED"
+    statuses = [((data or {}).get("blind") or {}).get("parsed", {}).get("status")
+                for data in per_role.values()]
+    statuses = [s for s in statuses if s in ("PASS", "CONCERN")]
+    if not statuses:
+        return "UNKNOWN"           # nothing parsed cleanly
+    if any(s == "CONCERN" for s in statuses):
+        return "CONCERN"
+    return "PASS"                  # all experts PASS + no open block-concerns
 
 
 def _choose_classification(counts: Counter) -> str:
@@ -406,14 +422,18 @@ def _final_text(task: str, rules: str, per_role: dict, open_concerns: list[dict]
                 counts: Counter) -> str:
     classification = _choose_classification(counts)
     lines = [
-        f"VERDICT: {classification}",
+        # VERDICT is the review outcome (PASS/CONCERN/BLOCKED/UNKNOWN), NOT the
+        # content-pattern classification — an all-PASS review must read PASS, never
+        # inherit "UNKNOWN" from an absent content classification.
+        f"VERDICT: {_review_verdict(per_role, open_concerns)}",
+        f"CLASSIFICATION: {classification}",
         f"TASK: {task}",
         f"EVIDENCE_GATE: {'FAIL_CLOSED_OPEN_BLOCKS' if open_concerns else 'NO_OPEN_BLOCK_CONCERNS'}",
         f"RULES: {rules}",
         "ROLE_FINDINGS:",
     ]
     for role, data in per_role.items():
-        parsed = data.get("blind", {}).get("parsed", {})
+        parsed = ((data or {}).get("blind") or {}).get("parsed") or {}
         if parsed.get("parsed"):
             status = parsed["status"]
             severity = f"/{parsed['severity']}" if parsed.get("severity") else ""
