@@ -347,6 +347,59 @@ def _citation_gate(session_id: str, manifest: str | None, artifact: str, ledger:
             ledger["clerk"]["actions"].append(f"citation-gate BLOCK: uncited prior art «{item[:48]}»")
 
 
+# ── Destructive-ops floor gate (ROUND2_SYNTHESIS §6 item 2) ────────────────────────────────────
+# Catch destructive operations at the deterministic floor so they never depend on the LLM veto
+# catching them ("the veto is the net, not the primary defense"). A hit is attributed to the
+# safety-veto seat to ADJUDICATE — a scoped/intentional destructive op can be ACCEPTED-RISK; an
+# unjustified one stays open and blocks. The floor detects; the seat decides.
+_DESTRUCTIVE_PATTERNS = [
+    (r"\brm\s+-\w*[rf]", "rm -r/-f (recursive/force delete)"),
+    (r"\bDROP\s+(TABLE|DATABASE|SCHEMA)\b", "SQL DROP TABLE/DATABASE/SCHEMA"),
+    (r"\bTRUNCATE\b", "SQL TRUNCATE"),
+    (r"\bDELETE\s+FROM\s+[\w.\"`]+\s*(;|$)", "unbounded DELETE (no WHERE)"),
+    (r"\bgit\s+push\b[^\n]*\s(--force|-f)\b", "git force-push (history rewrite)"),
+    (r"\bgit\s+reset\s+--hard\b", "git reset --hard (discards work)"),
+    (r"\bdd\s+[^\n]*of=/dev/", "dd to a raw device"),
+    (r"\bchmod\s+-R\s+0?777\b", "chmod -R 777"),
+    (r"\b(shutdown|reboot|rmmod|modprobe|mkfs)\b", "host power/kernel/format op"),
+    (r">\s*/dev/(sd|nvme|disk)", "write to a raw disk device"),
+    (r"\bDETACH\s+DELETE\b(?![^\n]*session_id)", "unscoped graph DETACH DELETE"),
+]
+
+
+def _added_lines(artifact: str) -> str:
+    """For a unified diff, only NEW (added) lines can INTRODUCE a destructive op — removing one is
+    good. Scan added lines for a diff; the whole text otherwise."""
+    if re.search(r"(?m)^(diff --git|@@ |\+\+\+ |--- )", artifact):
+        return "\n".join(l[1:] for l in artifact.splitlines() if l.startswith("+") and not l.startswith("+++"))
+    return artifact
+
+
+def _destructive_ops_gate(session_id: str, artifact: str, roles: dict, ledger: dict) -> None:
+    text = _added_lines(artifact)
+    hits = [label for pat, label in _DESTRUCTIVE_PATTERNS if re.search(pat, text, re.I)]
+    if not hits:
+        return
+    # adjudicated by the safety-veto seat present in the roster; hard floor-block only if none.
+    veto_role = next((r for r in ("blast-shield", "scope-blast", "scope-sentinel") if r in roles),
+                     "destructive-ops-floor")
+    ledger.setdefault("destructive_ops_gate", []).extend(hits)
+    for label in hits:
+        for _ in range(4):
+            try:
+                mesh.contribute(
+                    session_id, veto_role,
+                    f"DESTRUCTIVE-OP at the floor: {label}. The change introduces a destructive "
+                    f"operation. Resolve as ACCEPTED-RISK only if it is intentional AND scoped (with "
+                    f"justification), else FIX-VERIFIED after it is removed/bounded; otherwise it blocks.",
+                    peers_read=[], read_version=mesh.read_session(session_id)["version"],
+                    kind="concern", severity="block", about=f"destructive-op:{label[:40]}", veto=True)
+                break
+            except mesh.StaleReadError:
+                continue
+        ledger["clerk"]["actions"].append(f"destructive-ops floor BLOCK ({veto_role}): {label}")
+
+
 def _parse_resolution_output(content: str) -> dict:
     obj, error = _extract_json_object(content)
     if error:
@@ -621,6 +674,9 @@ def council_review(task: str, artifact: str, rules: str, roster: dict | None = N
     grounded_rules = _ground_rules(rules, grounding_manifest)
     # Floor citation gate: uncited named prior art from the manifest BLOCKS (cite-or-supersede).
     _citation_gate(session_id, grounding_manifest, artifact, ledger)
+    # Floor destructive-ops scan: a destructive op is caught here (not left to the LLM veto) and
+    # routed to the safety seat to adjudicate (ACCEPTED-RISK if scoped/intentional, else it blocks).
+    _destructive_ops_gate(session_id, artifact, roles, ledger)
 
     for role, spec in roles.items():
         record = cli_adapter.cli_expert(
