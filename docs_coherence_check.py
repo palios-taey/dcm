@@ -42,6 +42,17 @@ import subprocess
 tracked = subprocess.run(["git", "-C", ROOT, "ls-files", "--error-unmatch", "AGENTS.md"],
                          capture_output=True).returncode == 0
 if agents is not None and not tracked: fail.append("AGENTS.md is untracked — every doc is a committed public artifact (nothing local)")
+# 8. SKILL.md (the run-a-council skill) must exist, be tracked, and use real council_cli subcommands
+cc_sub = set(re.findall(r'add_parser\("(\w+)"', rd("council_cli.py") or ""))
+skill = rd("SKILL.md")
+if skill is None: fail.append("SKILL.md missing — the run-a-council skill must exist (callers must not improvise)")
+else:
+    for cmd in re.findall(r"council_cli\.py (\w+)", skill):
+        if cc_sub and cmd not in cc_sub: fail.append(f"SKILL.md uses `council_cli.py {cmd}` but it's not a real subcommand {sorted(cc_sub)}")
+if re.search(r"(?m)^SKILL\.md$", gi): fail.append("SKILL.md is gitignored — the skill MUST be in the public repo")
+if skill is not None and subprocess.run(["git", "-C", ROOT, "ls-files", "--error-unmatch", "SKILL.md"],
+                                        capture_output=True).returncode != 0:
+    fail.append("SKILL.md is untracked — every doc is a committed public artifact")
 if fail:
     print("DOCS-COHERENCE: FAIL — docs drifted from code:")
     for f in fail: print(f"  - {f}")

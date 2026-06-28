@@ -27,6 +27,7 @@ Config is one env group: `DCM_NEO4J_URI` (default `bolt://localhost:7687`), `DCM
 | `council.py` | `council_plan` / `council_review`: seat roster, Foundation pre-flight grounding → blind round → reveal/resolution, evidence-gated publish. |
 | `platform_dcm.py` | `produce` (a codex producer, verified on REAL runs) + `audit` (blind diff audit; `--tier` scales the roster). |
 | `scaling.py` | blast-radius roster sizing (§4): triggers → compress(3)/standard(4)/expand(9) reviewers; the council seats N by tier, not a fixed constant. |
+| `council_cli.py` | the zero-improvisation invocation: `plan` / `review [--tier]`. What a caller runs — see `SKILL.md`. |
 
 ## Common commands
 ```bash

@@ -26,6 +26,7 @@ Env (the only config): `DCM_NEO4J_URI` (default `bolt://localhost:7687`), `DCM_N
 | `council.py` | `council_plan` / `council_review`: seat the roster (validated bases; reviewers ≠ producer base), **Foundation pre-flight grounding** → **cite-or-block citation gate** (uncited named prior art BLOCKS) → blind round (grounded by the manifest) → reveal/resolution, evidence-gated `publish_final`. `tier=` scales the roster. |
 | `platform_dcm.py` | orchestrator for fixing one driver: `produce` (a codex producer in a target worktree, verified on REAL runs — production is the oracle) + `audit` (blind diff audit through the mesh; `--tier` scales the roster). |
 | `scaling.py` | blast-radius roster sizing (§4): `tier_for(...)` (triggers → compress/standard/expand) + `reviewer_roster_for_tier(tier)` (3/4/9 reviewers, composed from canonical + `arms.EXPAND_ROLES`). The council seats N by tier, never a fixed constant. |
+| `council_cli.py` | the zero-improvisation invocation: `plan --problem-file --rules-file` / `review --task --artifact-file --rules-file [--tier]`. What a caller runs. See [`SKILL.md`](./SKILL.md). |
 
 ## Common commands
 ```bash
