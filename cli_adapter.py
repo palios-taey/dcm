@@ -8,10 +8,13 @@ fleet-capability gap (the four fleet CLIs are full peers, not subprocess tools).
 
 SECURITY (honest, per gatekeeper audit): peer contributions are attacker-influenceable text
 and they are injected into the CLI prompt below, while acting CLIs can take real actions on
-the host. The "do NOT edit any files" line in the prompt is advisory ONLY — it is not an
-enforced sandbox. Run CLI experts on councils whose participants you trust, and/or sandbox
-the CLI (containerize, drop fs/network) before seating it on an untrusted-content mesh. This
-is inherent to running an acting agent on shared deliberation; it is documented, not solved.
+the host. The "do NOT edit any files" line in the prompt is advisory ONLY — it is not a jail.
+ENFORCED GATE: a session opened with start_session(trust='untrusted') makes cli_expert REFUSE
+to run an acting CLI bare (SandboxRequiredError) — the caller MUST pass a `sandbox` runner that
+executes the CLI fs/network-dropped (a container). The gate is fail-closed in code; the sandbox
+runner itself (the actual jail) is supplied by the deployment. Trusted sessions run in-process.
+So: mark any council touching untrusted/ISMA-derived content trust='untrusted' and the mesh will
+not silently seat an acting agent on it.
 """
 from __future__ import annotations
 from collections.abc import Callable
@@ -21,6 +24,12 @@ import mesh
 # Prompts are fed via stdin / --prompt-file, NEVER as an argv string: a coordinated
 # mesh prompt embeds all peer contributions and routinely exceeds Linux MAX_ARG_STRLEN
 # (128KB per arg) -> "OSError: Argument list too long". stdin / file have no such cap.
+
+
+class SandboxRequiredError(RuntimeError):
+    """Raised when an acting CLI would be seated on an UNTRUSTED payload without a sandbox.
+    Fail-closed: the mesh refuses rather than running an acting agent on attacker-influenceable
+    content. Supply a sandbox runner (fs/network-dropped) or mark the session trusted."""
 
 
 def _raise_on_failure(cli: str, proc: subprocess.CompletedProcess[str]) -> None:
@@ -86,16 +95,28 @@ _RUNNERS = {"codex": _run_codex, "gemini": _run_gemini, "claude": _run_claude, "
 def cli_expert(session_id: str, role: str, lens: str, cli: str = "codex", max_retry: int = 4,
                *, peers_visible: bool = True, prompt_extra: str | None = None,
                parse_contribution: Callable[[str, dict], dict] | None = None,
-               return_record: bool = False, timeout: int = 400) -> str | dict:
+               return_record: bool = False, timeout: int = 400,
+               sandbox: Callable[[str, str, int], str] | None = None) -> str | dict:
     """Run one CLI expert and commit its output to the mesh.
 
     peers_visible=False is for sealed blind rounds: the adapter still reads the
     session version needed for CAS, but the CLI prompt receives no peer content
     and the mesh contribution honestly claims no peer reads.
+
+    sandbox is an optional runner ``(cli, prompt, timeout) -> str`` that executes the CLI in a
+    fs/network-dropped jail (e.g. a container). On an UNTRUSTED session (start_session(trust=
+    'untrusted')) it is REQUIRED — the adapter refuses to run an acting CLI bare on attacker-
+    influenceable content (SandboxRequiredError). On a trusted session the in-process runner is used.
     """
     run = _RUNNERS[cli]
     for _ in range(max_retry):
         ctx = mesh.read_session(session_id)
+        # SANDBOX GATE (ROUND2_SYNTHESIS §6 item 1): every council CLI is an ACTING agent (real host
+        # fs/network). Refuse to seat one on an untrusted/ISMA-derived payload without a sandbox.
+        if ctx.get("trust") == "untrusted" and sandbox is None:
+            raise SandboxRequiredError(
+                f"refusing to seat acting CLI {cli!r} (role {role!r}) on an UNTRUSTED payload "
+                f"without a sandbox; pass sandbox=<fs/network-dropped runner> or mark the session trusted")
         visible_peers = ctx["contributions"] if peers_visible else []
         peers_txt = "\n\n".join(f"[{c['role']}] {c['content']}" for c in visible_peers) or "(none yet)"
         peer_header = "PEER CONTRIBUTIONS (build on / sharpen / disagree - do NOT restate, do NOT edit any files)"
@@ -111,7 +132,7 @@ def cli_expert(session_id: str, role: str, lens: str, cli: str = "codex", max_re
             f"for each peer you engage — never agree just to converge.")
         if prompt_extra:
             prompt = f"{prompt}\n\n{prompt_extra}"
-        content = run(prompt, timeout=timeout)
+        content = sandbox(cli, prompt, timeout) if sandbox else run(prompt, timeout=timeout)
         typed = parse_contribution(content, ctx) if parse_contribution else {}
         if not isinstance(typed, dict):
             raise TypeError("parse_contribution must return a dict of mesh.contribute keyword arguments")

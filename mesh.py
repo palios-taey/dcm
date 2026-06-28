@@ -185,13 +185,19 @@ def _resolution_closes(concern: dict, resolution: dict) -> bool:
     return True
 
 
-def start_session(topic: str, payload: str, roles: list[str] | None = None) -> str:
-    """Open a coordination session. payload = the artifact under work (e.g. a draft response)."""
+def start_session(topic: str, payload: str, roles: list[str] | None = None, *,
+                  trust: str = "trusted") -> str:
+    """Open a coordination session. payload = the artifact under work (e.g. a draft response).
+
+    trust='untrusted' marks the payload as attacker-influenceable / ISMA-derived; the CLI adapter
+    then REFUSES to seat an acting CLI on it without a sandbox (ROUND2_SYNTHESIS §6 item 1)."""
+    if trust not in ("trusted", "untrusted"):
+        raise ValueError(f"trust must be 'trusted' or 'untrusted', got {trust!r}")
     sid = f"dcm_{uuid.uuid4().hex[:12]}"
     with _db().session() as s:
         s.run("""CREATE (x:DCMSession {session_id:$sid, topic:$topic, payload:$payload,
-                 roles:$roles, status:'open', created:$ts})""",
-              sid=sid, topic=topic, payload=payload, roles=roles or [], ts=time.time())
+                 roles:$roles, status:'open', trust:$trust, created:$ts})""",
+              sid=sid, topic=topic, payload=payload, roles=roles or [], trust=trust, ts=time.time())
     return sid
 
 
@@ -229,6 +235,7 @@ def read_session(session_id: str) -> dict:
                        "created": n["created"]})
     return {"session_id": session_id, "topic": x["topic"], "payload": x["payload"],
             "status": x["status"], "final": x.get("final"),
+            "trust": x.get("trust") or "trusted",   # default for pre-trust sessions
             "contributions": cs, "version": len(cs)}
 
 
