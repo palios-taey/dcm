@@ -22,11 +22,11 @@ During audits of the producer's generation runs, the DCM review layer successful
 - **Geometry Forks**: The producer introduced a git branch fork that re-introduced a regression that a prior commit had deliberately and systematically fixed.
 
 ### C. Latent Bugs Detected via Code Audits
-Direct multi-lens audits of existing application drivers (such as `internal-app`) uncovered high-severity, latent defects that had bypassed standard code-generation passes:
-- **Finding A (Paid Service is Free)**: The credit-debiting routine `<routine>()` in `<module>` had **zero call sites** across the entire repository. No credit/balance validation gate existed on billable paths, leaving the service fully open and free.
-- **Finding B (Authentication Bypass)**: The middleware granted unauthenticated loopback access based on `request.client.host == "127.0.0.1"`. In production, because the app is served via a reverse-proxy tunnel, all public web traffic arrived via loopback, effectively bypassing authentication globally for `<endpoint>*` endpoints.
-- **Finding C (Secrets Leak)**: Plaintext production test credentials (`<credential>`) were found committed in readiness scripts.
-- **Finding D (PII Leak)**: Live accessibility trees committed as test fixtures contained private personal conversations and browser state.
+Direct multi-lens audits of a separate internal application's code uncovered high-severity, latent defects that had bypassed standard code-generation passes:
+- **Finding A (billable path with no gate)**: a credit-debiting routine had **zero call sites** — no balance/credit validation gate existed on billable paths, leaving the service effectively open.
+- **Finding B (authentication bypass)**: middleware granted unauthenticated access on a loopback-host check; because the app was served behind a reverse-proxy tunnel, all public traffic arrived via loopback, globally bypassing authentication.
+- **Finding C (committed credential)**: a plaintext test credential was found committed in a readiness script.
+- **Finding D (PII in fixtures)**: live accessibility trees committed as test fixtures contained private personal conversation + browser state.
 
 ### D. All-platform rebuild, judged by-execution by an independent judge
 The DCM rebuilt 5 consult drivers (one per platform), each judged independently by the consult-engine owner via REAL production consults + screen/clipboard ground truth (the engine's own ok/fail status is unreliable — false-negatives from a stale display-process-PID race), NO synthetic prompts. Verdict:
