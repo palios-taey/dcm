@@ -29,9 +29,19 @@ for cmd in re.findall(r"platform_dcm\.py (\w+)", claude):
 mesh = rd("mesh.py") or ""
 for env in set(re.findall(r"`(DCM_NEO4J_[A-Z]+)`", claude)):
     if env not in mesh: fail.append(f"CLAUDE.md documents env `{env}` but mesh.py never reads it")
-# 6. the AI operating guide must be tracked in git (not gitignored)
+# 6. the AI operating guides must be tracked in git (not gitignored)
 gi = rd(".gitignore") or ""
 if re.search(r"(?m)^CLAUDE\.md$", gi): fail.append("CLAUDE.md is gitignored — the AI operating guide MUST be in the public repo")
+if re.search(r"(?m)^AGENTS\.md$", gi): fail.append("AGENTS.md is gitignored — the codex/gemini operating guide MUST be in the public repo")
+# 7. AGENTS.md (codex/gemini entry point) must exist + point at CLAUDE.md, never revert to orphaned tooling boilerplate
+agents = rd("AGENTS.md")
+if agents is None: fail.append("AGENTS.md missing — codex/gemini read it as their entry point")
+elif "CLAUDE.md" not in agents: fail.append("AGENTS.md does not reference CLAUDE.md — it must point CLI agents at the canonical operating guide")
+elif "gitnexus:start" in agents: fail.append("AGENTS.md is auto-generated tooling boilerplate, not the DCM operating doc")
+import subprocess
+tracked = subprocess.run(["git", "-C", ROOT, "ls-files", "--error-unmatch", "AGENTS.md"],
+                         capture_output=True).returncode == 0
+if agents is not None and not tracked: fail.append("AGENTS.md is untracked — every doc is a committed public artifact (nothing local)")
 if fail:
     print("DOCS-COHERENCE: FAIL — docs drifted from code:")
     for f in fail: print(f"  - {f}")
