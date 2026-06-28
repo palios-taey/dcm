@@ -24,7 +24,7 @@ Config is one env group: `DCM_NEO4J_URI` (default `bolt://localhost:7687`), `DCM
 | `mesh.py` | substrate: `start_session` / `read_session` / `contribute(read_version)` (real CAS) / `publish_final` (fails closed on open block-concerns) / `verify_coordination`. |
 | `mesh_cli.py` | agent ⇄ mesh interface: `start` / `read` / `contribute` / `status` / `publish`. |
 | `cli_adapter.py` | runs a real CLI as a mesh expert (`cli_expert`); prompts via stdin / `--prompt-file` (never argv). |
-| `council.py` | `council_plan` / `council_review`: seat roster, blind round → reveal/resolution, evidence-gated publish. |
+| `council.py` | `council_plan` / `council_review`: seat roster, Foundation pre-flight grounding → blind round → reveal/resolution, evidence-gated publish. |
 | `platform_dcm.py` | `produce` (a codex producer, verified on REAL runs) + `audit` (blind diff audit; `--tier` scales the roster). |
 | `scaling.py` | blast-radius roster sizing (§4): triggers → compress(3)/standard(4)/expand(9) reviewers; the council seats N by tier, not a fixed constant. |
 

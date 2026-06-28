@@ -227,6 +227,62 @@ def _review_contribution_props(role: str):
     return parse
 
 
+# ── Foundation pre-flight (ROUND2_SYNTHESIS §4 seat 2 + §2 convergence 2) ──────────────────────
+# The grounding seat(s) run BEFORE the review round and emit a grounding manifest (prior solutions,
+# reusable utilities, commit SHAs, regression risks). The manifest is injected into the blind round
+# so every reviewer judges the artifact against the prior art it must honor or explicitly supersede.
+_GROUNDING_ROLES = ("foundation", "memory-scout", "git-historian")
+
+
+def _preflight_lens(spec: dict, task: str) -> str:
+    return (f"{spec['lens']}\n\n"
+            f"PRE-FLIGHT GROUNDING PASS — you run BEFORE the review round.\n"
+            f"REVIEW TASK:\n{task}")
+
+
+def _preflight_prompt_extra() -> str:
+    return ("Emit the grounding manifest the rest of the council must honor. Do NOT issue a verdict "
+            "on the artifact yet — surface the prior art it must reckon with.\nReturn exactly:\n"
+            "GROUNDING:\n- <prior solution / reusable utility / commit SHA / memory-shaped fact the "
+            "change must honor or explicitly supersede, or NONE>\n"
+            "REGRESSION_RISK:\n- <a deliberate prior fix in history this change could undo, or NONE>")
+
+
+def _grounding_contribution_props():
+    def parse(_content: str, _ctx: dict) -> dict:
+        return {"kind": "contribution"}   # grounding is non-blocking context, not a gate
+    return parse
+
+
+def _run_preflight(session_id: str, roles: dict, task: str, ledger: dict) -> str | None:
+    """Run the grounding seat(s) first; return the combined grounding manifest text (or None).
+    Recorded in the ledger and (by the caller) injected into the blind round."""
+    grounding = [r for r in _GROUNDING_ROLES if r in roles]
+    if not grounding:
+        return None
+    ledger["preflight"] = []
+    parts = []
+    for role in grounding:
+        spec = roles[role]
+        record = cli_adapter.cli_expert(
+            session_id, f"{role}:preflight", _preflight_lens(spec, task), cli=spec["cli"],
+            peers_visible=False, prompt_extra=_preflight_prompt_extra(),
+            parse_contribution=_grounding_contribution_props(), return_record=True)
+        manifest = record["content"].strip()
+        parts.append(f"[{role}]\n{manifest}")
+        ledger["preflight"].append({"role": role, "contrib_id": record["contrib_id"], "manifest": manifest})
+        ledger["clerk"]["actions"].append(
+            f"recorded pre-flight grounding from {role} as {record['contrib_id']}")
+    return "\n\n".join(parts)
+
+
+def _ground_rules(rules: str, manifest: str | None) -> str:
+    if not manifest:
+        return rules
+    return (f"{rules}\n\nGROUNDING MANIFEST (Foundation pre-flight — the change must HONOR or "
+            f"explicitly SUPERSEDE these; ignoring known prior art is a concern):\n{manifest}")
+
+
 def _parse_resolution_output(content: str) -> dict:
     obj, error = _extract_json_object(content)
     if error:
@@ -495,9 +551,14 @@ def council_review(task: str, artifact: str, rules: str, roster: dict | None = N
               "roster": {role: _role_public(spec) for role, spec in roles.items()},
               "blind_round": [], "resolution_round": []}
 
+    # Foundation PRE-FLIGHT first: the grounding seat(s) emit a manifest that grounds every blind
+    # reviewer, so the council judges the artifact against the prior art (§4 seat 2 + §2 conv 2).
+    grounding_manifest = _run_preflight(session_id, roles, task, ledger)
+    grounded_rules = _ground_rules(rules, grounding_manifest)
+
     for role, spec in roles.items():
         record = cli_adapter.cli_expert(
-            session_id, role, _lens_with_rules(spec, task, rules), cli=spec["cli"],
+            session_id, role, _lens_with_rules(spec, task, grounded_rules), cli=spec["cli"],
             peers_visible=False, prompt_extra=_blind_prompt_extra(),
             parse_contribution=_review_contribution_props(role), return_record=True)
         session = mesh.read_session(session_id)
