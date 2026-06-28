@@ -25,12 +25,14 @@ Config is one env group: `DCM_NEO4J_URI` (default `bolt://localhost:7687`), `DCM
 | `mesh_cli.py` | agent ⇄ mesh interface: `start` / `read` / `contribute` / `status` / `publish`. |
 | `cli_adapter.py` | runs a real CLI as a mesh expert (`cli_expert`); prompts via stdin / `--prompt-file` (never argv). |
 | `council.py` | `council_plan` / `council_review`: seat roster, blind round → reveal/resolution, evidence-gated publish. |
-| `platform_dcm.py` | `produce` (a codex producer, verified on REAL runs) + `audit` (blind N-seat diff audit). |
+| `platform_dcm.py` | `produce` (a codex producer, verified on REAL runs) + `audit` (blind diff audit; `--tier` scales the roster). |
+| `scaling.py` | blast-radius roster sizing (§4): triggers → compress(3)/standard(4)/expand(9) reviewers; the council seats N by tier, not a fixed constant. |
 
 ## Common commands
 ```bash
-python platform_dcm.py audit --diff-file <patch> --topic "<what>"   # seats the canonical §4 roster
-#   add --seats "role:cli,..." ONLY for a deliberate scoped subset; default = the full roster
+python platform_dcm.py audit --diff-file <patch> --topic "<what>" [--tier expand]
+#   --tier compress|standard|expand → 3|4|9 reviewers by blast radius (default standard).
+#   --seats "role:cli,..." overrides to a deliberate scoped subset.
 python platform_dcm.py produce --target-repo <worktree> --prompt-file <prompt>
 python mesh_cli.py start "<topic>" "<payload>"        # -> session_id
 python mesh_cli.py read <session_id>                  # peers + version (read before you write)

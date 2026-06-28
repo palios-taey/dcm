@@ -221,9 +221,45 @@ CLERK = {
     "owns": "concern ledger, parse status, peer-visibility provenance, dissent preservation",
 }
 
+# A second producer (different base from PRODUCER=codex) seated only on high-blast-radius councils
+# for generation decorrelation. ROUND2_SYNTHESIS §4 "Scale to 12 … add Producer-2 (different base)".
+PRODUCER_2 = {"seat": "Producer-2", "cli": "claude", "model": None}
+
+# Expansion reviewer roles for high-blast-radius councils. Standard FUSES Memory+Git into Foundation
+# and keeps one Scope+Safety-veto; expansion SPLITS them (§4 "split Foundation→Memory+Git, split
+# Scope→Scope-Sentinel + Blast-Shield") and adds depth roles (Test-Integrity, Dependency/API-reality,
+# Red-Team-injection). Staffed OFF the producer base (codex), spread evenly across gemini/claude/grok
+# (3 each — tighter ≤2-per-base is unreachable with 9 reviewers on 3 non-producer bases; a real
+# decorrelation limit of a 4-CLI fleet, noted not hidden). Both the eval C-ablation and the
+# operational scaling engine compose tiers from ROLES + EXPAND_ROLES.
+EXPAND_ROLES = {
+    "memory-scout": {"seat": "Memory Scout", "cli": "gemini",
+        "lens": "You are the MEMORY-SCOUT reviewer (Foundation split). Own ignored-prior-solution: "
+                "search memory/ISMA and existing utilities for an answer the patch reinvents."},
+    "git-historian": {"seat": "Git Historian", "cli": "claude",
+        "lens": "You are the GIT-HISTORIAN reviewer (Foundation split). Own regression-reintroduction: "
+                "check git history for a deliberate prior fix this change silently undoes."},
+    "scope-sentinel": {"seat": "Scope Sentinel", "cli": "gemini",
+        "lens": "You are the SCOPE-SENTINEL reviewer (Scope split). Own scope-semantics: does the diff "
+                "stay within the declared change boundary; flag scope creep into unrelated surfaces."},
+    "blast-shield": {"seat": "Blast Shield", "cli": "grok",
+        "lens": "You are the BLAST-SHIELD reviewer (Scope split) with unilateral safety-veto. Own "
+                "destructive operations, secrets, injection/exfil, and broad blast radius on shared consumers."},
+    "test-integrity": {"seat": "Test Integrity", "cli": "claude",
+        "lens": "You are the TEST-INTEGRITY reviewer. Own deleted/neutered/tampered tests and no-op "
+                "assertions; a green suite must mean the bug is actually fixed, not silenced."},
+    "dependency-api-reality": {"seat": "Dependency/API Reality", "cli": "gemini",
+        "lens": "You are the DEPENDENCY/API-REALITY reviewer. Own hallucinated APIs, wrong signatures, "
+                "and version/dependency mismatches against the real installed surface."},
+    "red-team-injection": {"seat": "Red-Team Injection", "cli": "grok",
+        "lens": "You are the RED-TEAM/INJECTION reviewer. Own prompt-injection, exfiltration, and "
+                "untrusted-input → action paths this change opens."},
+}
+
+_ALL_REVIEW_ROLES = {**ROLES, **EXPAND_ROLES}
 if ROLES["ground-runner"]["cli"] == PRODUCER["cli"]:
     raise RuntimeError("ground-runner MUST use a different base model than the producer")
-if any(role["cli"] == PRODUCER["cli"] for role in ROLES.values()):
+if any(role["cli"] == PRODUCER["cli"] for role in _ALL_REVIEW_ROLES.values()):
     raise RuntimeError("semantic reviewer roles must be staffed off the producer base model")
 
 FOUNDATION_PREFLIGHT_PROMPT = """{role}

@@ -19,7 +19,7 @@ legitimately lives there); this orchestration + its record live HERE, in the pub
 """
 import os, sys, argparse, subprocess, re, json, concurrent.futures as cf
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import mesh, cli_adapter, council
+import mesh, cli_adapter, council, scaling
 
 # Seats come from council.canonical_reviewer_roster() (the §4 roster — single source of truth);
 # this audit never redefines the roster. It ADDS consult-driver banned-shape emphasis per canonical
@@ -52,20 +52,21 @@ def _seat(sid, role, cli, lens):
     except Exception as e:
         return (role, cli, "FAIL", f"{type(e).__name__}: {e}")
 
-def _audit_seats(seats_override: str | None) -> dict:
-    """Return {role: (cli, full_lens)} seated from the canonical §4 roster (single source of
-    truth), each lens = canonical reviewer lens + consult-driver addendum + the verdict line.
-    seats_override ('role:cli,role:cli') is a deliberate scoped subset, still lensed canonically."""
-    roster = council.canonical_reviewer_roster()
+def _audit_seats(seats_override: str | None, tier: str = "standard") -> dict:
+    """Return {role: (cli, full_lens)} seated for the blast-radius TIER (compress/standard/expand;
+    §4 scaling), each lens = reviewer lens + consult-driver addendum + the verdict line.
+    seats_override ('role:cli,role:cli') is a deliberate scoped subset, still lensed from the pool."""
+    roster = scaling.reviewer_roster_for_tier(tier)
     def full_lens(role, base):
         return base + _AUDIT_ADDENDUM.get(role, "") + _VERDICT_INSTR
     if seats_override:
+        pool = scaling._role_pool()
         out = {}
         for s in seats_override.split(","):
             if not s:
                 continue
             role, cli = s.split(":", 1)
-            base = roster.get(role, {}).get("lens", f"You are the {role} reviewer.")
+            base = pool.get(role, {}).get("lens", f"You are the {role} reviewer.")
             out[role] = (cli, full_lens(role, base))
         return out
     return {role: (spec["cli"], full_lens(role, spec["lens"])) for role, spec in roster.items()}
@@ -73,10 +74,11 @@ def _audit_seats(seats_override: str | None) -> dict:
 def audit(args):
     global args_timeout; args_timeout = args.timeout
     diff = open(args.diff_file).read()
-    seats = _audit_seats(args.seats)
+    seats = _audit_seats(args.seats, args.tier)
     payload = (f"Blind diff audit — topic: {args.topic}. Verify the change below on the diff itself.\n\n=== DIFF ===\n" + diff)
     sid = mesh.start_session(f"AUDIT::{args.topic}", payload, roles=list(seats))
     print("audit session:", sid)
+    print(f"tier: {args.tier} ({len(seats)} seats)")
     print("roster:", ", ".join(f"{r}:{c}" for r, (c, _) in seats.items()))
     with cf.ThreadPoolExecutor(max_workers=len(seats)) as ex:
         for f in [ex.submit(_seat, sid, r, c, lens) for r, (c, lens) in seats.items()]:
@@ -91,7 +93,7 @@ def main():
     p = argparse.ArgumentParser(description=__doc__)
     sub = p.add_subparsers(dest="cmd", required=True)
     pp = sub.add_parser("produce"); pp.add_argument("--target-repo", required=True); pp.add_argument("--prompt-file", required=True); pp.add_argument("--model", default="gpt-5.5"); pp.set_defaults(fn=produce)
-    pa = sub.add_parser("audit"); pa.add_argument("--diff-file", required=True); pa.add_argument("--topic", required=True); pa.add_argument("--seats", default=None, help="optional scoped override 'role:cli,...'; default = the canonical §4 roster"); pa.add_argument("--timeout", type=int, default=400); pa.set_defaults(fn=audit)
+    pa = sub.add_parser("audit"); pa.add_argument("--diff-file", required=True); pa.add_argument("--topic", required=True); pa.add_argument("--tier", default="standard", choices=["compress", "standard", "expand"], help="blast-radius tier: compress(3)/standard(4)/expand(9) reviewers (§4 scaling)"); pa.add_argument("--seats", default=None, help="optional scoped override 'role:cli,...'; else the tier roster"); pa.add_argument("--timeout", type=int, default=400); pa.set_defaults(fn=audit)
     a = p.parse_args(); a.fn(a)
 
 if __name__ == "__main__":

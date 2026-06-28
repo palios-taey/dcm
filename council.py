@@ -119,9 +119,15 @@ def _normalize_roster(roster: dict | None) -> tuple[dict, dict]:
     roles, clerk = _default_roster()
     if roster is not None:
         roles = copy.deepcopy(roster)
-    missing = [role for role in _EXPECTED_ROLES if role not in roles]
-    if missing:
-        raise ValueError(f"roster missing required role(s): {', '.join(missing)}")
+    if not roles:
+        raise ValueError("roster is empty")
+    # The DEFAULT (standard) roster must carry the core converged seats; an explicitly-passed
+    # roster is a blast-radius tier (compress/expand) or a deliberate custom mix — validated by
+    # staffing, not by requiring the exact standard set.
+    if roster is None:
+        missing = [role for role in _EXPECTED_ROLES if role not in roles]
+        if missing:
+            raise ValueError(f"roster missing required role(s): {', '.join(missing)}")
     for role, spec in roles.items():
         for field in ("seat", "cli", "lens"):
             if not spec.get(field):
@@ -131,8 +137,8 @@ def _normalize_roster(roster: dict | None) -> tuple[dict, dict]:
         allowed = _ROLE_ALLOWED_CLIS.get(role)
         if allowed and spec["cli"] not in allowed:
             raise ValueError(f"roster role {role!r} must use one of {sorted(allowed)}, got {spec['cli']!r}")
-        if role == "ground-runner" and spec["cli"] == "codex":
-            raise ValueError("ground-runner must use a non-producer base model")
+        if spec["cli"] == "codex":   # all reviewers staffed OFF the producer base (decorrelation, §2.6)
+            raise ValueError(f"reviewer role {role!r} must not use the producer base 'codex'")
     return roles, clerk
 
 
@@ -462,14 +468,22 @@ def _final_text(task: str, rules: str, per_role: dict, open_concerns: list[dict]
     return "\n".join(lines)
 
 
-def council_review(task: str, artifact: str, rules: str, roster: dict | None = None) -> dict:
+def council_review(task: str, artifact: str, rules: str, roster: dict | None = None,
+                   tier: str | None = None) -> dict:
     """Run the DCM expert mix over an artifact and publish only if concerns close.
 
     The session payload is exactly the artifact. The rules and task are injected into each
     expert's lens so the blind round sees task + artifact + rules without peer text. Blind
     contributions honestly claim no peers_read; the reveal/resolution round uses peer-visible
     mesh reads and typed resolution records. Any unparsed expert output becomes a block concern.
+
+    tier (compress/standard/expand) seats a blast-radius-scaled roster (§4); ignored if an
+    explicit roster is given. Pass a high tier for high-blast-radius artifacts (secrets,
+    migration, release, cross-repo, gitnexus_impact HIGH/CRITICAL).
     """
+    if tier is not None and roster is None:
+        import scaling   # lazy: scaling imports council at module load; avoid an import cycle
+        roster = scaling.reviewer_roster_for_tier(tier)
     roles, clerk = _normalize_roster(roster)
     session_id = mesh.start_session(topic=task, payload=artifact, roles=list(roles))
     per_role = {role: {**_role_public(spec), "blind": None, "resolutions": []}
