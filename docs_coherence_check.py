@@ -53,6 +53,17 @@ if re.search(r"(?m)^SKILL\.md$", gi): fail.append("SKILL.md is gitignored — th
 if skill is not None and subprocess.run(["git", "-C", ROOT, "ls-files", "--error-unmatch", "SKILL.md"],
                                         capture_output=True).returncode != 0:
     fail.append("SKILL.md is untracked — every doc is a committed public artifact")
+# 9. README.md (the public front door) must exist, name real .py files, point at the invocation,
+#    and NOT carry the reverted sandbox claim (we run full-access; "sandbox before seating" was wrong)
+readme = rd("README.md")
+if readme is None:
+    fail.append("README.md missing")
+else:
+    for f in re.findall(r"`([a-z_]+\.py)`", readme):
+        if not os.path.exists(os.path.join(ROOT, f)): fail.append(f"README names `{f}` but it does not exist")
+    if re.search(r"sandbox before seating|sandbox the CLI|sandbox before", readme, re.I):
+        fail.append("README still implies sandboxing — we run full-access, no sandbox (reverted); state trusted-content-only")
+    if "council_cli.py" not in readme: fail.append("README does not point at council_cli.py (the invocation) — a reader can't run it")
 if fail:
     print("DOCS-COHERENCE: FAIL — docs drifted from code:")
     for f in fail: print(f"  - {f}")

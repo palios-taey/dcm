@@ -9,6 +9,15 @@ enforced *in the substrate* rather than by asking nicely.
 > coordination unless using it is mandatory and non-bypassable. DCM enforces read-before-write
 > *structurally* via a real compare-and-set.
 
+## Run a council (start here)
+```bash
+./setup.sh                                                              # checks deps + Neo4j
+python council_cli.py plan   --problem-file P --rules-file R            # consensus plan
+python council_cli.py review --task "<t>" --artifact-file A --rules-file R [--tier expand]  # verdict
+```
+Full how-to (the experts, tiers, gates, the run-on-trusted-content-only + degrades-if-a-CLI-is-down
+rules): **[`SKILL.md`](./SKILL.md)**. The rest of this README is the substrate it's built on.
+
 ## What the substrate actually guarantees (and what it doesn't)
 The failure mode of "spawn N agents and tell them to coordinate" is that they **commit into
 the void and silently work alone**, then report success. DCM's mechanisms, stated honestly
@@ -47,9 +56,12 @@ peers were in front of it and that it could not commit while ignoring the versio
 | File | What |
 |---|---|
 | `mesh.py` | the substrate: `start_session` / `read_session` (one-read bundle + `version` + any `final`) / `contribute(read_version)` (real CAS) / `verify_coordination` / `publish_final`. Neo4j-backed (own `:DCMSession`/`:DCMContribution` namespace; set `DCM_NEO4J_URI`). |
-| `council.py` | N-expert council runner + the `EXPERT_CONTRACT` (read → reason-citing-peers → contribute, retry-on-stale). |
+| `council.py` | the council: differentiated reviewers off the producer base → Foundation pre-flight grounding → cite-or-block + destructive-ops floor gates → blind round → reveal/evidence-gated resolution → `publish_final`. `council_plan` (consensus plan) / `council_review` (verdict, `tier=` scales the roster). |
+| `council_cli.py` | the zero-improvisation invocation: `plan` / `review [--tier]`. **Start here — see [`SKILL.md`](./SKILL.md).** |
+| `scaling.py` | blast-radius roster sizing: the council seats 3 / 4 / 9 reviewers (`compress`/`standard`/`expand`) by blast radius, not a fixed count. |
+| `platform_dcm.py` | orchestrate fixing one target: `produce` (a codex producer) + `audit` (a blind diff audit through the mesh). |
 | `taey_adapter.py` | run a served model (OpenAI-compatible endpoint, `TAEY_DCM_URL`) as a mesh expert. |
-| `cli_adapter.py` | run CLI agents (`codex exec`, `gemini -p`) as mesh experts. **See its security note — peer content is injected into an acting CLI; sandbox before seating on untrusted content.** |
+| `cli_adapter.py` | run CLI agents (codex / claude / gemini / grok) as mesh experts; a seat whose CLI is down / rate-limited / empty **falls back** to another installed CLI (`available_clis`, `fallbacks`). **Security: the CLIs run FULL-ACCESS — there is NO sandbox; run councils on TRUSTED content only** (an acting agent on attacker-influenceable peer text is an accepted, unmitigated risk). |
 | `reference/` | the prior (2025) Neo4j-coordination implementation — lessons, not the base. |
 
 ## The one invariant (participant-agnostic)
