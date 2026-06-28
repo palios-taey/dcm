@@ -283,6 +283,70 @@ def _ground_rules(rules: str, manifest: str | None) -> str:
             f"explicitly SUPERSEDE these; ignoring known prior art is a concern):\n{manifest}")
 
 
+# ── Citation/provenance gate (ROUND2_SYNTHESIS §2.4 + §7 convergence 7) ────────────────────────
+# Memory/Git is an ENFORCED gate, not a lossy brief: a change that ignores the grounding manifest
+# and re-derives a named prior solution must BLOCK (cite-or-supersede). Provenance DETECTION lives
+# in the deterministic floor, not a voting seat (so it cannot be out-voted).
+def _grounding_items(manifest: str | None) -> list[str]:
+    """Concrete GROUNDING prior-art lines from the pre-flight manifest (NONE excluded)."""
+    if not manifest:
+        return []
+    items, in_grounding = [], False
+    for line in manifest.splitlines():
+        head = line.strip().upper()
+        if head.startswith("GROUNDING"):
+            in_grounding = True; continue
+        if head.startswith("REGRESSION_RISK") or line.strip().startswith("["):
+            in_grounding = False; continue
+        body = line.strip().lstrip("-* ").strip()
+        if in_grounding and body and body.upper() != "NONE":
+            items.append(body)
+    return items
+
+
+def _citation_tokens(item: str) -> list[str]:
+    """Distinctive tokens a citing change would reference: `quoted` names, file.ext paths,
+    SHAs (≥7 hex), snake_case identifiers — concrete enough that absence means uncited."""
+    toks = set()
+    toks.update(re.findall(r"`([^`]+)`", item))
+    toks.update(re.findall(r"\b([\w./-]+\.[A-Za-z]\w+)\b", item))            # file.ext
+    toks.update(re.findall(r"\b([0-9a-f]{7,40})\b", item))                   # SHA
+    toks.update(re.findall(r"\b([a-z_][a-z0-9_]{2,}_[a-z0-9_]+)\b", item))   # snake_case
+    return sorted(t for t in toks if len(t) >= 4)
+
+
+def _citation_gate(session_id: str, manifest: str | None, artifact: str, ledger: dict) -> None:
+    """Raise a deterministic BLOCK concern for every concrete GROUNDING item the artifact neither
+    cites (a distinctive token present) nor supersedes. Items with no concrete token are not
+    enforceable and are skipped (never a false block)."""
+    items = _grounding_items(manifest)
+    if not items:
+        return
+    ledger.setdefault("citation_gate", [])
+    art = artifact.lower()
+    for item in items:
+        toks = _citation_tokens(item)
+        if not toks:
+            ledger["citation_gate"].append({"item": item, "tokens": [], "enforced": False})
+            continue
+        cited = any(t.lower() in art for t in toks)
+        ledger["citation_gate"].append({"item": item, "tokens": toks, "cited": cited, "enforced": True})
+        if not cited:
+            for _ in range(4):
+                try:
+                    mesh.contribute(
+                        session_id, "citation-gate",
+                        f"UNCITED PRIOR ART: the grounding manifest names «{item}» but the artifact "
+                        f"references none of {toks}. Cite-or-supersede: reuse the prior art or state "
+                        f"explicitly why it is superseded.",
+                        peers_read=[], read_version=mesh.read_session(session_id)["version"],
+                        kind="concern", severity="block", about=f"uncited:{item[:48]}")
+                    break
+                except mesh.StaleReadError:
+                    continue
+            ledger["clerk"]["actions"].append(f"citation-gate BLOCK: uncited prior art «{item[:48]}»")
+
+
 def _parse_resolution_output(content: str) -> dict:
     obj, error = _extract_json_object(content)
     if error:
@@ -555,6 +619,8 @@ def council_review(task: str, artifact: str, rules: str, roster: dict | None = N
     # reviewer, so the council judges the artifact against the prior art (§4 seat 2 + §2 conv 2).
     grounding_manifest = _run_preflight(session_id, roles, task, ledger)
     grounded_rules = _ground_rules(rules, grounding_manifest)
+    # Floor citation gate: uncited named prior art from the manifest BLOCKS (cite-or-supersede).
+    _citation_gate(session_id, grounding_manifest, artifact, ledger)
 
     for role, spec in roles.items():
         record = cli_adapter.cli_expert(
@@ -575,6 +641,10 @@ def council_review(task: str, artifact: str, rules: str, roster: dict | None = N
 
     for concern in list(mesh.open_concerns(session_id)):
         role = concern["role"]
+        if role not in roles:        # floor concern (e.g. citation-gate): blocks publish, not council-resolved
+            ledger["clerk"]["actions"].append(
+                f"floor concern {concern['contrib_id']} ({role}) left OPEN — blocks publish until the artifact is fixed")
+            continue
         spec = roles[role]
         record = cli_adapter.cli_expert(
             session_id, f"{role}:resolver", _lens_with_rules(spec, task, rules),
