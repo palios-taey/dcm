@@ -65,9 +65,36 @@ We explicitly restrict our claims regarding DCM capabilities to avoid over-promi
 
 ---
 
+## 3b. Rebuilt council — live operation, robustness, and dogfooding [Observed, 2026-06]
+
+After this verdict's first cut, the operational council was found to have collapsed to a 3–4 role
+stub versus the synthesized 6–12 blast-radius-scaled roster (§4). It was rebuilt to spec and
+exercised on real work:
+
+- **Runs end-to-end, real CLIs.** `council_plan` on a real operational task published an ~8k-char
+  consensus plan with all four reviewer seats firing (codex producer; gemini Foundation; claude
+  Ground-runner; **grok** Evasive-repair; gemini Scope/veto) — the panel deliberated through the
+  mesh and synthesized, not a stub.
+- **Dogfooding caught real defects a single instance + unit tests missed.** Running the council's
+  own output surfaced two genuine bugs in the harness — a silently-committed empty contribution on a
+  headless CLI refusal, and an unrunnable-headless CLI flag — both root-caused. The review/verify
+  value (§3A) is now Observed in practice, not only inferred.
+- **Robust + portable.** A seat whose CLI is down/rate-limited/empty falls back to another installed
+  CLI rather than crashing the council; a Claude-Code-only environment runs every seat on one model,
+  publishes, and the run **honestly self-reports `single-model`** (no cross-model decorrelation) —
+  verified on real CLIs. Degraded modes are labeled, never sold as the full multi-model panel.
+
 ## 4. Conclusion & Verdict
 
 ```
-VERDICT: PASS (CONDITIONAL ON C-ABLATION VERIFICATION)
+VERDICT: PASS as a verification/review layer (Observed). The generative "DCM beats a single
+         instance" CLAIM is UNKNOWN — the rigorous C-ablation + I/D contrast is DEFERRED, not run.
 ```
-The Distributed Cognitive Mesh is highly validated as a **robust verification and review layer** capable of stopping high-severity, silent defects before they reach production. Its value as a collaborative generative engine remains an active research area requiring uncontaminated, fresh benchmarks for empirical proof.
+The Distributed Cognitive Mesh is validated as a **robust, portable verification-and-review layer**
+that catches high-severity silent defects a single instance ships — now Observed in live operation
+and dogfooding, not just inferred. Whether real-time multi-model deliberation **out-generates a
+single instance** remains **Unknown**: the formal measurement (C-ablation + I/D contrast on a fresh,
+uncontaminated benchmark — saturated benchmarks have no headroom, §2) was **deferred** by the
+operator in favor of accepting the practical validation. It is revivable; until it runs, no
+generative-superiority claim is made. *Three-register honest: practical capability Observed; rigorous
+generative advantage Unknown-by-deferral.*
