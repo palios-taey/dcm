@@ -24,17 +24,14 @@ Env (the only config): `DCM_NEO4J_URI` (default `bolt://localhost:7687`), `DCM_N
 | `mesh_cli.py` | the agent ⇄ mesh interface: `start` / `read` / `contribute` / `status` / `publish`. How a CLI expert (or you) joins a session. |
 | `cli_adapter.py` | runs a real CLI as a mesh expert (`cli_expert`): reads the session, prompts the CLI, commits its output via CAS. Prompts go via stdin / `--prompt-file` (never argv — coordinated prompts exceed MAX_ARG_STRLEN). gemini needs `--skip-trust`. **Degrades, doesn't crash:** a seat whose CLI is down/rate-limited/empty falls back to another installed CLI (`fallbacks`); `available_clis()` detects what's installed; only-claude → single-model (labeled in `ledger.decorrelation`). |
 | `council.py` | `council_plan` / `council_review`: seat the roster (validated bases; reviewers ≠ producer base), **Foundation pre-flight grounding** → **cite-or-block citation gate** (uncited named prior art BLOCKS) → blind round (grounded by the manifest) → reveal/resolution, evidence-gated `publish_final`. `tier=` scales the roster. |
-| `platform_dcm.py` | orchestrator for fixing one driver: `produce` (a codex producer in a target worktree, verified on REAL runs — production is the oracle) + `audit` (blind diff audit through the mesh; `--tier` scales the roster). |
-| `scaling.py` | blast-radius roster sizing (§4): `tier_for(...)` (triggers → compress/standard/expand) + `reviewer_roster_for_tier(tier)` (3/4/9 reviewers, composed from canonical + `arms.EXPAND_ROLES`). The council seats N by tier, never a fixed constant. |
-| `council_cli.py` | the zero-improvisation invocation: `plan --problem-file --rules-file` / `review --task --artifact-file --rules-file [--tier]`. What a caller runs. See [`SKILL.md`](./SKILL.md). |
+| `platform_dcm.py` | orchestrator for fixing one driver: `produce` (a codex producer in a target worktree, verified on REAL runs — production is the oracle) + `audit` (blind diff audit through the mesh on the FULL 9-reviewer roster). |
+| `scaling.py` | the roster is the FULL 9-role defined library, ALWAYS (`reviewer_roster_for_tier` returns it for every tier; `tier_for` never shrinks — high blast radius only adds a 2nd producer). No 3/4-seat option — that's the rejected stub. |
+| `council_cli.py` | the zero-improvisation invocation: `plan --problem-file --rules-file` / `review --task --artifact-file --rules-file`. Seats the full council; no panel knob. See [`SKILL.md`](./SKILL.md). |
 
 ## Common commands
 ```bash
 # run a blind N-seat audit of a diff (real CLIs through the mesh)
-python platform_dcm.py audit --diff-file <patch> --topic "<what>" [--tier expand]
-#   --tier compress|standard|expand → 3|4|9 reviewers by blast radius (default standard).
-#   use expand for high-blast-radius diffs (secrets/migration/release/cross-repo/HIGH impact).
-#   --seats "role:cli,..." overrides to a deliberate scoped subset.
+python platform_dcm.py audit --diff-file <patch> --topic "<what>"   # full 9-reviewer roster, always
 # run a producer that implements + verifies on real runs (no synthetic tests)
 python platform_dcm.py produce --target-repo <worktree> --prompt-file <prompt>
 # drive the mesh directly

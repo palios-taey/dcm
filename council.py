@@ -42,7 +42,9 @@ flags you if you omit a peer that was present to you, so cite what you genuinely
 """
 
 
-_EXPECTED_ROLES = ("foundation", "ground-runner", "evasive-repair", "scope-blast")
+_EXPECTED_ROLES = ("memory-scout", "git-historian", "ground-runner", "evasive-repair",
+                   "scope-sentinel", "blast-shield", "test-integrity",
+                   "dependency-api-reality", "red-team-injection")
 _ROLE_ALLOWED_CLIS = {
     "foundation": {"gemini", "claude"},
     "ground-runner": {"gemini", "claude", "grok"},
@@ -72,6 +74,35 @@ _PLAN_ROLE_CONTRACTS = {
         "SCOPE+BLAST PLANNING DUTY: define scope boundaries, destructive-operation limits, "
         "secret/data safety, display isolation, exact cleanup scope, and what must be escalated "
         "instead of broadened."
+    ),
+    "memory-scout": (
+        "MEMORY-SCOUT PLANNING DUTY: name the prior solutions / existing utilities / memory or "
+        "ISMA facts the plan must reuse instead of reinventing. Recover-don't-re-derive."
+    ),
+    "git-historian": (
+        "GIT-HISTORIAN PLANNING DUTY: name the git history the plan must honor — prior deliberate "
+        "fixes it must not silently undo, and the commits/regressions to check against."
+    ),
+    "scope-sentinel": (
+        "SCOPE-SENTINEL PLANNING DUTY: define the change boundary — what is in vs out of scope, and "
+        "where the plan must NOT creep into unrelated surfaces."
+    ),
+    "blast-shield": (
+        "BLAST-SHIELD PLANNING DUTY (safety-veto): name destructive operations, secret/data exposure, "
+        "injection/exfil paths, and broad-blast-radius effects on shared consumers the plan must avoid "
+        "or escalate."
+    ),
+    "test-integrity": (
+        "TEST-INTEGRITY PLANNING DUTY: define how the plan proves the fix WITHOUT deleting, neutering, "
+        "or no-op-ing tests; a green result must mean the bug is actually fixed."
+    ),
+    "dependency-api-reality": (
+        "DEPENDENCY/API-REALITY PLANNING DUTY: name the real installed APIs / signatures / dependency "
+        "versions the plan must target — no hallucinated or version-mismatched calls."
+    ),
+    "red-team-injection": (
+        "RED-TEAM/INJECTION PLANNING DUTY: name the prompt-injection, exfiltration, and untrusted-input "
+        "→ action risks the plan opens, and how it must close or bound them."
     ),
 }
 
@@ -103,15 +134,25 @@ def _literal_from_arms(name: str) -> dict:
     raise RuntimeError(f"eval/arms.py does not define literal {name}")
 
 
+# The canonical council is the FULL defined-role library — the 9-role split roster — ALWAYS.
+# There is no smaller council; a 3- or 4-seat panel is the rejected stub (Jesse: 8–12 by blast
+# radius, defined roles, never tiny). With a producer + synthesizer/clerk this is a 10–12-seat council.
+_FULL_ROSTER_ROLES = ("memory-scout", "git-historian", "ground-runner", "evasive-repair",
+                      "scope-sentinel", "blast-shield", "test-integrity",
+                      "dependency-api-reality", "red-team-injection")
+
+
 def _default_roster() -> tuple[dict, dict]:
-    return copy.deepcopy(_literal_from_arms("ROLES")), copy.deepcopy(_literal_from_arms("CLERK"))
+    pool = {**_literal_from_arms("ROLES"), **_literal_from_arms("EXPAND_ROLES")}
+    roles = {n: copy.deepcopy(pool[n]) for n in _FULL_ROSTER_ROLES}
+    return roles, copy.deepcopy(_literal_from_arms("CLERK"))
 
 
 def canonical_reviewer_roster() -> dict:
-    """The §4 converged reviewer roster (role -> {seat, cli, lens}) — the SINGLE source of
-    truth for who seats a DCM review/audit. council_review/council_plan and any external
-    caller (platform_dcm) seat THIS, never an ad-hoc per-call role list, so every entry point
-    runs the same canonical mix. ROUND2_SYNTHESIS.md §4 + §5 item 2."""
+    """The canonical reviewer roster (role -> {seat, cli, lens}) — the SINGLE source of truth for who
+    seats a DCM review/audit/plan: the FULL 9-role split roster, always. council_review / council_plan
+    / platform_dcm all seat THIS — never an ad-hoc per-call subset, so no entry point can run a tiny
+    council. ROUND2_SYNTHESIS.md §4 (8–12 by blast radius, defined roles)."""
     return _default_roster()[0]
 
 
@@ -142,9 +183,8 @@ def _normalize_roster(roster: dict | None) -> tuple[dict, dict]:
         roles = copy.deepcopy(roster)
     if not roles:
         raise ValueError("roster is empty")
-    # The DEFAULT (standard) roster must carry the core converged seats; an explicitly-passed
-    # roster is a blast-radius tier (compress/expand) or a deliberate custom mix — validated by
-    # staffing, not by requiring the exact standard set.
+    # The DEFAULT roster must carry the full converged seats (the 9-role library); an explicitly-
+    # passed roster is a deliberate custom mix — validated by staffing, not by the exact default set.
     if roster is None:
         missing = [role for role in _EXPECTED_ROLES if role not in roles]
         if missing:
@@ -663,22 +703,15 @@ def _final_text(task: str, rules: str, per_role: dict, open_concerns: list[dict]
     return "\n".join(lines)
 
 
-def council_review(task: str, artifact: str, rules: str, roster: dict | None = None,
-                   tier: str | None = None) -> dict:
+def council_review(task: str, artifact: str, rules: str, roster: dict | None = None) -> dict:
     """Run the DCM expert mix over an artifact and publish only if concerns close.
 
-    The session payload is exactly the artifact. The rules and task are injected into each
+    Seats the FULL canonical roster (9 reviewers) by default — there is no panel knob and no tiny
+    option. The session payload is exactly the artifact. Rules and task are injected into each
     expert's lens so the blind round sees task + artifact + rules without peer text. Blind
     contributions honestly claim no peers_read; the reveal/resolution round uses peer-visible
     mesh reads and typed resolution records. Any unparsed expert output becomes a block concern.
-
-    tier (compress/standard/expand) seats a blast-radius-scaled roster (§4); ignored if an
-    explicit roster is given. Pass a high tier for high-blast-radius artifacts (secrets,
-    migration, release, cross-repo, gitnexus_impact HIGH/CRITICAL).
     """
-    if tier is not None and roster is None:
-        import scaling   # lazy: scaling imports council at module load; avoid an import cycle
-        roster = scaling.reviewer_roster_for_tier(tier)
     roles, clerk = _normalize_roster(roster)
     session_id = mesh.start_session(topic=task, payload=artifact, roles=list(roles))
     per_role = {role: {**_role_public(spec), "blind": None, "resolutions": []}

@@ -1,16 +1,15 @@
 """council_cli — run a DCM council with ZERO improvisation. The canonical invocation.
 
     python council_cli.py plan   --problem-file P --rules-file R
-    python council_cli.py review --task "<t>" --artifact-file A --rules-file R [--tier standard]
+    python council_cli.py review --task "<t>" --artifact-file A --rules-file R
 
 `plan`   → the council produces a consensus implementation PLAN from a problem (council_plan).
 `review` → the council reviews an ARTIFACT and returns a verdict, fail-closed on open block
            concerns (council_review): Foundation pre-flight grounding → cite-or-block citation
            gate → destructive-ops floor scan → blind round → reveal/resolution → publish.
 
---tier (review only) scales the roster by blast radius: compress(3) / standard(4) / expand(9)
-reviewers. Use expand for high-blast-radius artifacts (secrets / migration / release / cross-repo
-/ gitnexus_impact HIGH-CRITICAL); standard is the default.
+Every council seats the FULL defined-role library (9 reviewers + synthesizer/clerk = a 10–12-seat
+council). There is no smaller option and no panel knob — a tiny council is the rejected stub.
 
 Inputs are FILES (operator content is a runtime arg, never committed). This fires the REAL CLIs
 through the mesh — production is the oracle, there are no synthetic tests. Prints the final
@@ -46,7 +45,7 @@ def _plan(args) -> int:
 def _review(args) -> int:
     artifact = open(args.artifact_file).read()
     rules = open(args.rules_file).read()
-    r = council.council_review(args.task, artifact, rules, tier=args.tier)  # -> {"verdict", ...}
+    r = council.council_review(args.task, artifact, rules)  # full roster -> {"verdict", ...}
     v = r["verdict"]
     body = v.get("final") or v.get("final_candidate") or json.dumps(v, indent=2, default=str)
     return _emit(v["status"], body, r.get("ledger", {}))
@@ -63,8 +62,6 @@ def main() -> int:
     pr.add_argument("--task", required=True)
     pr.add_argument("--artifact-file", required=True)
     pr.add_argument("--rules-file", required=True)
-    pr.add_argument("--tier", default="standard", choices=["compress", "standard", "expand"],
-                    help="blast-radius roster: compress(3)/standard(4)/expand(9) reviewers")
     pr.set_defaults(fn=_review)
     args = p.parse_args()
     return args.fn(args)

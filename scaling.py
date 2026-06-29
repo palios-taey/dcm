@@ -1,26 +1,25 @@
-"""scaling — blast-radius-tiered DCM roster sizing. ROUND2_SYNTHESIS.md §4 ("6–12, scale by blast radius").
+"""scaling — DCM roster. The council ALWAYS seats the full defined-role library (9 reviewers); blast
+radius only adds a second producer for generation, it NEVER shrinks the panel. ROUND2_SYNTHESIS.md §4.
 
-The council seats N reviewers by a computed blast-radius TIER, never a fixed constant:
-- compress (low-risk): 3 core reviewers — trivial / doc / low-surface changes.
-- standard: the 4 canonical converged reviewers — the default.
-- expand (high-blast-radius): 9 reviewers — Foundation split→Memory+Git, Scope split→Sentinel+Blast-Shield,
-  + Test-Integrity, Dependency/API-reality, Red-Team-injection (a second producer is also seated in the
-  produce loop; see arms.PRODUCER_2).
-
-HIGH-blast-radius triggers (§4): live data, secrets, migration, gate-change, cross-repo, release,
-prior-failure, OR a gitnexus_impact HIGH/CRITICAL. Any one trigger → expand. Explicit low_risk → compress.
-The EXACT counts are the C-ablation's job to tune (§7); this provides the tiered mechanism + the role sets,
-not a frozen answer.
+There is no 3- or 4-seat "council" — that is the stub Jesse rejected (8–12 by blast radius, defined
+roles). Every council seats all 9 reviewers — Foundation split→Memory-Scout + Git-Historian, Scope
+split→Scope-Sentinel + Blast-Shield, Ground-runner, Evasive-repair, Test-Integrity,
+Dependency/API-reality, Red-Team-injection — plus a synthesizer/clerk (and a producer in the
+plan/produce flows): a 10–12-seat council. `expand` (high blast radius: live data, secrets,
+migration, gate-change, cross-repo, release, prior-failure, or gitnexus_impact HIGH/CRITICAL) adds a
+second producer (different base) in the produce flow; the reviewer panel is the full 9 either way.
 """
 import council
 
-# Tier → ordered reviewer role names (composed from canonical ROLES + arms.EXPAND_ROLES).
-_COMPRESS = ("foundation", "evasive-repair", "scope-blast")
-_STANDARD = ("foundation", "ground-runner", "evasive-repair", "scope-blast")
-_EXPAND = ("memory-scout", "git-historian", "ground-runner", "evasive-repair",
-           "scope-sentinel", "blast-shield", "test-integrity",
-           "dependency-api-reality", "red-team-injection")
-_TIERS = {"compress": _COMPRESS, "standard": _STANDARD, "expand": _EXPAND}
+# The council seats the FULL defined-role library — the 9-role split roster — ALWAYS. There is NO
+# smaller tier: a 3- or 4-seat "council" is not a council (Jesse, repeatedly: 8–12 by blast radius,
+# defined roles, never a tiny panel). With the producer + a synthesizer/clerk this is a 10–12-seat
+# council. `standard` and `expand` both seat the full roster; `expand` additionally seats a second
+# producer (different base) in the produce flow for the highest-blast-radius generation work.
+_FULL_ROSTER = ("memory-scout", "git-historian", "ground-runner", "evasive-repair",
+                "scope-sentinel", "blast-shield", "test-integrity",
+                "dependency-api-reality", "red-team-injection")
+_TIERS = {"standard": _FULL_ROSTER, "expand": _FULL_ROSTER}
 
 # Any one of these being true escalates to the full high-blast-radius council (§4).
 HIGH_TRIGGERS = ("live_data", "secrets", "migration", "gate_change",
@@ -28,17 +27,14 @@ HIGH_TRIGGERS = ("live_data", "secrets", "migration", "gate_change",
 
 
 def _role_pool() -> dict:
-    """All seatable reviewer roles: canonical (council) + expansion (arms.EXPAND_ROLES)."""
-    return {**council.canonical_reviewer_roster(), **council._literal_from_arms("EXPAND_ROLES")}
+    """All defined reviewer roles: the core (arms ROLES) + the split/depth set (arms EXPAND_ROLES)."""
+    return {**council._literal_from_arms("ROLES"), **council._literal_from_arms("EXPAND_ROLES")}
 
 
 def tier_for(*, impact_risk: str | None = None, low_risk: bool = False, **triggers) -> str:
-    """Compute the blast-radius tier.
-
-    impact_risk: a gitnexus_impact level ('LOW'/'MEDIUM'/'HIGH'/'CRITICAL') or None.
-    triggers: any of HIGH_TRIGGERS set True. Any HIGH/CRITICAL impact or any high-trigger → 'expand'.
-    Explicit low_risk=True with no high-trigger → 'compress'. Otherwise 'standard'.
-    """
+    """Compute the blast-radius tier. There is NO tier below the full roster — low_risk does NOT
+    shrink the panel (a tiny council is the rejected stub). Returns 'expand' (adds a 2nd producer in
+    the produce flow) on any HIGH/CRITICAL impact or high-trigger, else 'standard'. Both seat all 9."""
     unknown = [k for k in triggers if k not in HIGH_TRIGGERS]
     if unknown:
         raise ValueError(f"unknown blast-radius trigger(s): {unknown}; allowed: {HIGH_TRIGGERS}")
@@ -46,8 +42,6 @@ def tier_for(*, impact_risk: str | None = None, low_risk: bool = False, **trigge
         return "expand"
     if any(triggers.get(t) for t in HIGH_TRIGGERS):
         return "expand"
-    if low_risk:
-        return "compress"
     return "standard"
 
 

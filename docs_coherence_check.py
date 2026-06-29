@@ -64,6 +64,18 @@ else:
     if re.search(r"sandbox before seating|sandbox the CLI|sandbox before", readme, re.I):
         fail.append("README still implies sandboxing — we run full-access, no sandbox (reverted); state trusted-content-only")
     if "council_cli.py" not in readme: fail.append("README does not point at council_cli.py (the invocation) — a reader can't run it")
+# 10. THE FLOOR INVARIANT (mechanical — a tiny council can NEVER come back): the canonical roster and
+#     every scaling tier must seat >= 8 reviewers. A 3- or 4-seat "council" is the rejected stub.
+try:
+    import importlib, council as _c, scaling as _s
+    importlib.reload(_c); importlib.reload(_s)
+    n = len(_c.canonical_reviewer_roster())
+    if n < 8: fail.append(f"canonical roster seats only {n} reviewers — floor is 8 (no tiny council; 8–12 by blast radius)")
+    for t in _s._TIERS:
+        m = len(_s.reviewer_roster_for_tier(t))
+        if m < 8: fail.append(f"scaling tier {t!r} seats only {m} reviewers — floor is 8 (no compress/tiny tier)")
+except Exception as e:
+    fail.append(f"could not verify the roster floor invariant: {type(e).__name__}: {e}")
 if fail:
     print("DOCS-COHERENCE: FAIL — docs drifted from code:")
     for f in fail: print(f"  - {f}")

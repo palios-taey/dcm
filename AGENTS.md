@@ -25,15 +25,13 @@ Config is one env group: `DCM_NEO4J_URI` (default `bolt://localhost:7687`), `DCM
 | `mesh_cli.py` | agent ⇄ mesh interface: `start` / `read` / `contribute` / `status` / `publish`. |
 | `cli_adapter.py` | runs a real CLI as a mesh expert (`cli_expert`); prompts via stdin / `--prompt-file` (never argv). |
 | `council.py` | `council_plan` / `council_review`: seat roster, Foundation pre-flight grounding → blind round → reveal/resolution, evidence-gated publish. |
-| `platform_dcm.py` | `produce` (a codex producer, verified on REAL runs) + `audit` (blind diff audit; `--tier` scales the roster). |
-| `scaling.py` | blast-radius roster sizing (§4): triggers → compress(3)/standard(4)/expand(9) reviewers; the council seats N by tier, not a fixed constant. |
-| `council_cli.py` | the zero-improvisation invocation: `plan` / `review [--tier]`. What a caller runs — see `SKILL.md`. |
+| `platform_dcm.py` | `produce` (a codex producer, verified on REAL runs) + `audit` (blind diff audit on the FULL 9-reviewer roster). |
+| `scaling.py` | the roster is the FULL 9-role library ALWAYS; no 3/4-seat option (the rejected stub). High blast radius only adds a 2nd producer, never shrinks the panel. |
+| `council_cli.py` | the zero-improvisation invocation: `plan` / `review` (full council; no panel knob). See `SKILL.md`. |
 
 ## Common commands
 ```bash
-python platform_dcm.py audit --diff-file <patch> --topic "<what>" [--tier expand]
-#   --tier compress|standard|expand → 3|4|9 reviewers by blast radius (default standard).
-#   --seats "role:cli,..." overrides to a deliberate scoped subset.
+python platform_dcm.py audit --diff-file <patch> --topic "<what>"   # full 9-reviewer roster, always
 python platform_dcm.py produce --target-repo <worktree> --prompt-file <prompt>
 python mesh_cli.py start "<topic>" "<payload>"        # -> session_id
 python mesh_cli.py read <session_id>                  # peers + version (read before you write)

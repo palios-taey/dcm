@@ -22,20 +22,27 @@ Write your inputs to text files first (so big inputs and operator content stay r
 committed). You get back: `=== STATUS: published ===` + the final plan/verdict + an honest
 coordination record. Exit code 0 = published; non-zero = it did not (e.g. a review blocked).
 
-## Who deliberates (every run, automatically)
+## Who deliberates (the FULL roster — every run, automatically)
+Every council seats the **full 9-reviewer defined-role library** — there is no smaller option and no
+panel knob. A 3- or 4-seat "council" is the rejected stub. With the producer + synthesizer this is a
+**10–12-seat council**.
+
 | seat | role | CLI |
 |---|---|---|
-| producer | writes the plan/patch (never approves its own) | **codex** |
-| reviewer | Foundation — prior solutions, regression risk (pre-flight grounding) | **gemini** |
+| producer | writes the plan/patch (never approves its own; plan/produce flows) | **codex** |
+| reviewer | Memory-Scout — ignored prior solutions / reusable utilities (pre-flight grounding) | **gemini** |
+| reviewer | Git-Historian — regression-reintroduction from history (pre-flight grounding) | **claude** |
 | reviewer | Ground-runner — runs code/tests, no-op/hallucination | **claude** |
 | reviewer | **Evasive-repair** — silent fallbacks, symptom-not-cause, 6SIGMA root-cause | **grok** |
-| reviewer | Scope + Safety-veto — scope, destructive ops, secrets, blast radius | **gemini** |
-| clerk | Provenance Clerk (non-voting) — ledger, evidence-closure | deterministic |
+| reviewer | Scope-Sentinel — scope-creep into unrelated surfaces | **gemini** |
+| reviewer | Blast-Shield — destructive ops, secrets, injection, blast radius (safety-veto) | **grok** |
+| reviewer | Test-Integrity — deleted/neutered/no-op tests | **claude** |
+| reviewer | Dependency/API-Reality — hallucinated APIs, version mismatches | **gemini** |
+| reviewer | Red-Team-Injection — prompt-injection / exfil / untrusted-input→action | **grok** |
+| clerk | Provenance Clerk / synthesizer (non-voting) — ledger, evidence-closure, terminal converge | deterministic |
 
-**All four reviewer CLIs run every time — codex, claude, gemini, AND grok.** `review` can scale the
-roster by blast radius with `--tier compress|standard|expand` (3 / 4 / 9 reviewers); `expand` adds
-Memory-Scout, Git-Historian, Blast-Shield, Test-Integrity, Dependency/API, Red-Team. Default is the
-4-reviewer standard panel above.
+**All four CLIs run every time — codex, claude, gemini, AND grok.** There is no `--tier` and no way
+to seat fewer; high blast radius adds a second producer in the produce flow, it never shrinks the panel.
 
 **What if a CLI is down, or you only have Claude Code?** The council degrades, it does not crash. A
 seat whose CLI is down / rate-limited / times out / returns empty **falls back to another installed
