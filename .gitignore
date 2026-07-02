@@ -1,5 +1,8 @@
 __pycache__/
 *.pyc
 .venv/
-reference/
 .claude/
+# pip / build artifacts (created by `pip install .`)
+build/
+dist/
+*.egg-info/
