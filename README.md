@@ -19,11 +19,14 @@ only** (see Security below).
 
 ## Install + run a council (start here)
 ```bash
-pip install .                    # or: pip install -r requirements.txt
-./setup.sh                       # checks deps + a reachable Neo4j, prints the next step
+python3 -m venv .venv && . .venv/bin/activate    # a venv is required on PEP-668 systems (modern Debian/Ubuntu)
+pip install .                                    # deps (neo4j) + the dcm-council / dcm-mesh entry points
+./setup.sh                                       # checks deps + a reachable Neo4j, prints the next step
 dcm-council plan   --problem-file P --rules-file R            # consensus plan  (== python council_cli.py plan)
 dcm-council review --task "<t>" --artifact-file A --rules-file R   # verdict (full council)
 ```
+Needs Python ≥3.10 and a reachable Neo4j (`bolt://localhost:7687` by default). The council's
+"experts" are external CLIs you already have on PATH — codex / claude / gemini / grok.
 Full how-to (the experts, gates, the run-on-trusted-content-only + degrades-if-a-CLI-is-down
 rules): **[`SKILL.md`](./SKILL.md)**. The rest of this README is the substrate it's built on.
 
