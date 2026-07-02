@@ -1,9 +1,9 @@
 """DCM mesh — the substrate for fleet/Taey real-time cognitive coordination.
 
-Design (2026-06-25, infra), informed by the prior DCM lessons (dcm/reference/ +
-infra-soul/research/dcm_rebuild_foundation.md) AND the gatekeeper open-mandate audit of
-the first cut (gatekeeper/reviews/dcm-open-mandate/verdict.md, BLOCK @10e5aad). The audit
-defeated all three honesty mechanisms BY EXECUTION; this version is the root-cause fix.
+Design informed by lessons from a prior DCM implementation AND an open-mandate audit of the
+first cut that defeated all three honesty mechanisms BY EXECUTION (the gate did not serialize,
+verify_coordination was circular, peers_read overstated reading). This version is the
+root-cause fix; the substrate below is re-verifiable by execution (see validate_substrate.py).
 
   * The old DCM died on ADOPTION: agents WROTE to the graph but never READ, then reported
     success while working in silos. We make that failure STRUCTURALLY HARD via a REAL

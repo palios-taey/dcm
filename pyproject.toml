@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dcm-mesh"
+version = "0.1.0"
+description = "Distributed Cognitive Mesh — a council of differentiated CLI-agent experts deliberating through a Neo4j compare-and-set mesh, with evidence-gated review."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { file = "LICENSE" }
+dependencies = [
+    "neo4j>=5.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/palios-taey/dcm"
+
+[project.scripts]
+dcm-council = "council_cli:main"
+dcm-mesh = "mesh_cli:main"
+
+# Flat single-directory layout: the modules live at the repo root (mesh.py, council.py, ...).
+[tool.setuptools]
+py-modules = [
+    "mesh", "mesh_cli", "cli_adapter", "council", "council_cli",
+    "scaling", "platform_dcm", "taey_adapter",
+]

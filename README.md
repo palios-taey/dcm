@@ -9,13 +9,22 @@ enforced *in the substrate* rather than by asking nicely.
 > coordination unless using it is mandatory and non-bypassable. DCM enforces read-before-write
 > *structurally* via a real compare-and-set.
 
-## Run a council (start here)
+**What's proven vs not (three-register honest):** DCM is validated as a **review / verification
+layer** — multi-lens blind review that catches silent defects a single agent ships (Observed, by
+execution). Whether real-time deliberation out-*generates* a single agent is **Unknown — deferred,
+not run** (see [`design/DCM_VALIDATION_VERDICT.md`](./design/DCM_VALIDATION_VERDICT.md)). Known
+limitations are tracked openly in [`design/KNOWN_LIMITATIONS.md`](./design/KNOWN_LIMITATIONS.md) —
+**the acting-CLI experts run FULL-ACCESS with no host sandbox, so run councils on TRUSTED content
+only** (see Security below).
+
+## Install + run a council (start here)
 ```bash
-./setup.sh                                                              # checks deps + Neo4j
-python council_cli.py plan   --problem-file P --rules-file R            # consensus plan
-python council_cli.py review --task "<t>" --artifact-file A --rules-file R  # verdict (full council)
+pip install .                    # or: pip install -r requirements.txt
+./setup.sh                       # checks deps + a reachable Neo4j, prints the next step
+dcm-council plan   --problem-file P --rules-file R            # consensus plan  (== python council_cli.py plan)
+dcm-council review --task "<t>" --artifact-file A --rules-file R   # verdict (full council)
 ```
-Full how-to (the experts, tiers, gates, the run-on-trusted-content-only + degrades-if-a-CLI-is-down
+Full how-to (the experts, gates, the run-on-trusted-content-only + degrades-if-a-CLI-is-down
 rules): **[`SKILL.md`](./SKILL.md)**. The rest of this README is the substrate it's built on.
 
 ## What the substrate actually guarantees (and what it doesn't)
@@ -62,12 +71,21 @@ peers were in front of it and that it could not commit while ignoring the versio
 | `platform_dcm.py` | orchestrate fixing one target: `produce` (a codex producer) + `audit` (a blind diff audit through the mesh). |
 | `taey_adapter.py` | run a served model (OpenAI-compatible endpoint, `TAEY_DCM_URL`) as a mesh expert. |
 | `cli_adapter.py` | run CLI agents (codex / claude / gemini / grok) as mesh experts; a seat whose CLI is down / rate-limited / empty **falls back** to another installed CLI (`available_clis`, `fallbacks`). **Security: the CLIs run FULL-ACCESS — there is NO sandbox; run councils on TRUSTED content only** (an acting agent on attacker-influenceable peer text is an accepted, unmitigated risk). |
-| `reference/` | the prior (2025) Neo4j-coordination implementation — lessons, not the base. |
 
 ## The one invariant (participant-agnostic)
 Every participant — code agent, served model, CLI — funnels through the **same**
 `mesh.contribute(read_version)` chokepoint via a thin adapter. That single CAS token enforces
 read-before-write uniformly.
+
+## Security — read this before you run a council
+> **CRITICAL, by design and unmitigated:** the council's "experts" are real CLI agents (codex /
+> claude / gemini / grok) invoked with **full-access flags** (auto-approve / permission-skip / YOLO)
+> and **no host sandbox**. Peer contributions on the mesh are attacker-influenceable text fed into
+> those acting agents, and the "do not edit files" instruction is prompt text, *not* an enforced
+> jail. **Run councils only on TRUSTED content and trusted participants**, ideally in a throwaway /
+> fs-and-network-dropped environment. This is an accepted, documented risk, not a solved one — see
+> [`design/KNOWN_LIMITATIONS.md`](./design/KNOWN_LIMITATIONS.md) issue #1. Sandboxing acting CLIs is
+> tracked, not shipped.
 
 ## Adoption / config (env)
 - `DCM_NEO4J_URI` (default `bolt://localhost:7687`) — the mesh graph.

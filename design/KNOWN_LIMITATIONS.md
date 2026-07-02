@@ -1,6 +1,10 @@
-# DCM functional issue sweep - 2026-07-01
+# DCM — Known Limitations & Roadmap (sweep dated 2026-07-01)
 
-Scope: known functional issues from operational experience, council runs, eval artifacts, and current implementation review. This is not the static packaging/CI/hardcode gap inventory.
+> We run this tool against itself and write down what breaks, with severities and repro. This is the
+> honest gap ledger with fix paths, not a defect confession — a project that hides its known issues
+> is the one to distrust. Each item is labeled Observed / Inferred / Unknown.
+
+Scope: known limitations from operational experience, council runs, eval artifacts, and current implementation review. This is not the static packaging/CI/hardcode gap inventory.
 
 Truth register:
 

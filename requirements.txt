@@ -1,0 +1,3 @@
+# DCM runtime dependency. The council/mesh substrate needs only the Neo4j driver;
+# the "experts" are external CLIs you already have on PATH (codex / claude / gemini / grok).
+neo4j>=5.0

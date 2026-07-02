@@ -13,6 +13,7 @@ to catch drift/defects a single agent ships.
 
 ## Setup (one command)
 ```bash
+pip install .         # installs deps (neo4j) + the dcm-council / dcm-mesh entry points
 ./setup.sh            # checks deps + a reachable DCM_NEO4J_URI, prints the next step
 ```
 Config is one env group: `DCM_NEO4J_URI` (default `bolt://localhost:7687`), `DCM_NEO4J_USER` /

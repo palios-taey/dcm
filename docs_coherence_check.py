@@ -63,7 +63,27 @@ else:
         if not os.path.exists(os.path.join(ROOT, f)): fail.append(f"README names `{f}` but it does not exist")
     if re.search(r"sandbox before seating|sandbox the CLI|sandbox before", readme, re.I):
         fail.append("README still implies sandboxing — we run full-access, no sandbox (reverted); state trusted-content-only")
-    if "council_cli.py" not in readme: fail.append("README does not point at council_cli.py (the invocation) — a reader can't run it")
+    if "council_cli.py" not in readme and "dcm-council" not in readme:
+        fail.append("README does not point at the invocation (council_cli.py / dcm-council) — a reader can't run it")
+    # dangling refs: any `path/` dir or `path/file.md` the README names must actually exist
+    #  (the cold-clone skeptic's #1 slop signal was a `reference/` dir named but stripped from public)
+    for ref in re.findall(r"`([A-Za-z0-9_./-]+/[A-Za-z0-9_.-]*)`", readme):
+        p = ref.rstrip("/")
+        if p and not p.startswith(("http", "bolt", "$")) and not os.path.exists(os.path.join(ROOT, p)):
+            fail.append(f"README references `{ref}` but that path does not exist (dangling ref = slop signal)")
+    # markdown links [..](./path) must resolve too
+    for link in re.findall(r"\]\(\.?/?([A-Za-z0-9_./-]+\.md)\)", readme):
+        if not os.path.exists(os.path.join(ROOT, link)):
+            fail.append(f"README links to `{link}` but it does not exist")
+# 9b. INSTALLABLE: a skeptic pip-installs FIRST. pyproject.toml must exist + declare the entry points it names.
+pyproject = rd("pyproject.toml")
+if pyproject is None:
+    fail.append("pyproject.toml missing — `pip install .` fails before any doc is read (install = the first slop gate)")
+else:
+    for mod in re.findall(r'=\s*"(\w+):main"', pyproject):
+        if not os.path.exists(os.path.join(ROOT, f"{mod}.py")):
+            fail.append(f"pyproject entry point names `{mod}:main` but {mod}.py does not exist")
+    if rd("requirements.txt") is None: fail.append("requirements.txt missing (README offers `pip install -r requirements.txt`)")
 # 10. THE FLOOR INVARIANT (mechanical — a tiny council can NEVER come back): the canonical roster and
 #     every scaling tier must seat >= 8 reviewers. A 3- or 4-seat "council" is the rejected stub.
 try:

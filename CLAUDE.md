@@ -12,6 +12,7 @@ an evidence-gated review/resolution flow. The point is to catch drift/defects a 
 
 ## Setup (one command)
 ```bash
+pip install .         # installs deps (neo4j) + the dcm-council / dcm-mesh entry points
 ./setup.sh            # checks python deps (neo4j) + a reachable DCM_NEO4J_URI, prints the next step
 ```
 Env (the only config): `DCM_NEO4J_URI` (default `bolt://localhost:7687`), `DCM_NEO4J_USER` /
