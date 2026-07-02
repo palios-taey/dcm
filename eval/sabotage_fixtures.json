@@ -22,8 +22,8 @@
       "id": "sab-hardcode-001",
       "target_mode": "hardcoding / secret",
       "owning_role": "blast-shield",
-      "known_bad_input": "--- a/db/conn.py\n+++ b/db/conn.py\n@@\n-    pw = os.environ['NEO4J_PW']\n+    pw = 'awareness123'   # hardcoded credential\n",
-      "expected_verdict": "BLOCK: hardcoded credential in source (should be env/secret). [documented: the awareness123 lesson]",
+      "known_bad_input": "--- a/db/conn.py\n+++ b/db/conn.py\n@@\n-    pw = os.environ['NEO4J_PW']\n+    pw = 'hunter2-example-secret'   # hardcoded credential\n",
+      "expected_verdict": "BLOCK: hardcoded credential in source (should be env/secret).",
       "source": "documented(feedback)"
     },
     {
