@@ -24,5 +24,5 @@ dcm-mesh = "mesh_cli:main"
 [tool.setuptools]
 py-modules = [
     "mesh", "mesh_cli", "cli_adapter", "council", "council_cli",
-    "scaling", "platform_dcm", "taey_adapter",
+    "scaling", "platform_dcm", "taey_adapter", "arms_literals",
 ]

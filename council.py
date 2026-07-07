@@ -1,19 +1,18 @@
 """DCM council runtime.
 
 The public entry points are council_review(task, artifact, rules, roster=None) and
-council_plan(problem, rules, roster=None). They seat the converged expert mix from eval/arms.py
-on the mesh, preserve blind-then-reveal discipline, and publish finals only through
+council_plan(problem, rules, roster=None). They seat the converged expert mix from the packaged
+role literals on the mesh, preserve blind-then-reveal discipline, and publish finals only through
 mesh.publish_final(). The clerk here is deterministic and non-voting: it can route, parse,
 summarize, and fail closed, but it cannot approve or overrule an open block concern.
 """
 from __future__ import annotations
-import ast
 from collections import Counter
-from pathlib import Path
 import copy
 import json
 import re
 import sys
+import arms_literals
 import cli_adapter
 import mesh
 
@@ -122,16 +121,12 @@ def council_report(session_id: str) -> dict:
 
 
 def _literal_from_arms(name: str) -> dict:
-    """Read literal role constants from eval/arms.py without importing its solver stack."""
-    arms_path = Path(__file__).resolve().parent / "eval" / "arms.py"
-    tree = ast.parse(arms_path.read_text())
-    for node in tree.body:
-        if not isinstance(node, ast.Assign):
-            continue
-        for target in node.targets:
-            if isinstance(target, ast.Name) and target.id == name:
-                return ast.literal_eval(node.value)
-    raise RuntimeError(f"eval/arms.py does not define literal {name}")
+    """Read packaged role constants without importing the eval solver stack."""
+    try:
+        value = getattr(arms_literals, name)
+    except AttributeError as exc:
+        raise RuntimeError(f"arms_literals does not define literal {name}") from exc
+    return copy.deepcopy(value)
 
 
 # The canonical council is the FULL defined-role library — the 9-role split roster — ALWAYS.

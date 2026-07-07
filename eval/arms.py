@@ -92,6 +92,7 @@ import re
 from solver_codex import solve_instance, CODEX_MODEL, extract_repo, run_codex, capture_patch
 from solver import _cmd, CLI_MODEL
 import shutil, tempfile as _tf
+from arms_literals import CLERK, EXPAND_ROLES, PRODUCER as _PRODUCER_LITERAL, PRODUCER_2, ROLES
 
 TEST_PROMPT = """A bug is described below for the repository in the current working directory (checked out at the buggy commit). Write ONE pytest regression test, in a NEW file `test_dcm_repro.py` at the repo root, that FAILS on this buggy code and would PASS once the bug is fixed. Do NOT fix the bug. Do NOT edit any other file. Only create test_dcm_repro.py.
 
@@ -188,73 +189,10 @@ class BoNArm:
 # I / D — role council. I and D are byte-identical EXCEPT: in the revision round
 # D's roles see all peers' first-round concerns (forced read/revise); I's see
 # only their own. That single delta IS the coordination primitive (D-I primary).
+# Role literals live in arms_literals.py so installed council entry points do not
+# need the solver-heavy eval/ tree on disk.
 # ---------------------------------------------------------------------------
-PRODUCER = {"seat": "Producer", "cli": "codex", "model": CODEX_MODEL}
-
-ROLES = {
-    "foundation": {
-        "seat": "Foundation",
-        "cli": "gemini",
-        "lens": "You are the FOUNDATION reviewer. Use memory-shaped and Git-shaped grounding: look for ignored prior solutions, duplicated existing utilities, and regression reintroduction from history.",
-    },
-    "ground-runner": {
-        "seat": "Execution/Ground-runner",
-        "cli": "claude",
-        "lens": "You are the EXECUTION/GROUND-RUNNER reviewer. Run relevant visible code or tests in this throwaway checkout when useful. Own hallucinated APIs, test tamper, deleted or neutered tests, and no-op fixes.",
-    },
-    "evasive-repair": {
-        "seat": "Evasive-repair",
-        "cli": "grok",
-        "lens": "You are the EVASIVE-REPAIR reviewer. Own silent fallbacks, swallowed errors, stub guards, and symptom-not-cause patches. Demand the simpler 6SIGMA root-cause shape.",
-    },
-    "scope-blast": {
-        "seat": "Scope + Safety-veto",
-        "cli": "gemini",
-        "lens": "You are the SCOPE+BLAST reviewer with unilateral safety-veto authority. Own scope violations, destructive operations, secrets, injection/exfiltration, and unsafe broad blast radius.",
-    },
-}
-
-CLERK = {
-    "seat": "Provenance Clerk",
-    "kind": "deterministic state-machine",
-    "voting": False,
-    "owns": "concern ledger, parse status, peer-visibility provenance, dissent preservation",
-}
-
-# A second producer (different base from PRODUCER=codex) seated only on high-blast-radius councils
-# for generation decorrelation. ROUND2_SYNTHESIS §4 "Scale to 12 … add Producer-2 (different base)".
-PRODUCER_2 = {"seat": "Producer-2", "cli": "claude", "model": None}
-
-# Expansion reviewer roles for high-blast-radius councils. Standard FUSES Memory+Git into Foundation
-# and keeps one Scope+Safety-veto; expansion SPLITS them (§4 "split Foundation→Memory+Git, split
-# Scope→Scope-Sentinel + Blast-Shield") and adds depth roles (Test-Integrity, Dependency/API-reality,
-# Red-Team-injection). Staffed OFF the producer base (codex), spread evenly across gemini/claude/grok
-# (3 each — tighter ≤2-per-base is unreachable with 9 reviewers on 3 non-producer bases; a real
-# decorrelation limit of a 4-CLI fleet, noted not hidden). Both the eval C-ablation and the
-# operational scaling engine compose tiers from ROLES + EXPAND_ROLES.
-EXPAND_ROLES = {
-    "memory-scout": {"seat": "Memory Scout", "cli": "gemini",
-        "lens": "You are the MEMORY-SCOUT reviewer (Foundation split). Own ignored-prior-solution: "
-                "search memory/ISMA and existing utilities for an answer the patch reinvents."},
-    "git-historian": {"seat": "Git Historian", "cli": "claude",
-        "lens": "You are the GIT-HISTORIAN reviewer (Foundation split). Own regression-reintroduction: "
-                "check git history for a deliberate prior fix this change silently undoes."},
-    "scope-sentinel": {"seat": "Scope Sentinel", "cli": "gemini",
-        "lens": "You are the SCOPE-SENTINEL reviewer (Scope split). Own scope-semantics: does the diff "
-                "stay within the declared change boundary; flag scope creep into unrelated surfaces."},
-    "blast-shield": {"seat": "Blast Shield", "cli": "grok",
-        "lens": "You are the BLAST-SHIELD reviewer (Scope split) with unilateral safety-veto. Own "
-                "destructive operations, secrets, injection/exfil, and broad blast radius on shared consumers."},
-    "test-integrity": {"seat": "Test Integrity", "cli": "claude",
-        "lens": "You are the TEST-INTEGRITY reviewer. Own deleted/neutered/tampered tests and no-op "
-                "assertions; a green suite must mean the bug is actually fixed, not silenced."},
-    "dependency-api-reality": {"seat": "Dependency/API Reality", "cli": "gemini",
-        "lens": "You are the DEPENDENCY/API-REALITY reviewer. Own hallucinated APIs, wrong signatures, "
-                "and version/dependency mismatches against the real installed surface."},
-    "red-team-injection": {"seat": "Red-Team Injection", "cli": "grok",
-        "lens": "You are the RED-TEAM/INJECTION reviewer. Own prompt-injection, exfiltration, and "
-                "untrusted-input → action paths this change opens."},
-}
+PRODUCER = {**_PRODUCER_LITERAL, "model": CODEX_MODEL}
 
 _ALL_REVIEW_ROLES = {**ROLES, **EXPAND_ROLES}
 if ROLES["ground-runner"]["cli"] == PRODUCER["cli"]:
