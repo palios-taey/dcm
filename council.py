@@ -47,8 +47,8 @@ _EXPECTED_ROLES = ("memory-scout", "git-historian", "ground-runner", "evasive-re
 _ROLE_ALLOWED_CLIS = {
     "foundation": {"gemini", "claude"},
     "ground-runner": {"gemini", "claude", "grok"},
-    "evasive-repair": {"grok"},
-    "scope-blast": {"gemini", "grok"},
+    "evasive-repair": {"claude", "grok"},
+    "scope-blast": {"gemini", "claude", "grok"},
 }
 _RESOLUTION_DISPOSITIONS = {"FIX-VERIFIED", "FALSE-POSITIVE", "OUT-OF-SCOPE", "ACCEPTED-RISK", "ESCALATE"}
 _EVIDENCE_REQUIRED = {"FIX-VERIFIED", "FALSE-POSITIVE"}

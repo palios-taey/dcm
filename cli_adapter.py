@@ -25,10 +25,17 @@ class CliRunError(RuntimeError):
     (mesh CAS, retry same CLI): a CliRunError means try a DIFFERENT CLI for this seat, or degrade."""
 
 
+def _disabled_clis() -> set[str]:
+    raw = os.environ.get("DCM_DISABLE_CLIS", "")
+    return {c.strip().lower() for c in raw.split(",") if c.strip()}
+
+
 def available_clis() -> list[str]:
-    """Which expert CLIs are actually installed on PATH (in _RUNNERS preference order). A council
-    seats from these; a missing CLI is not a crash, it's just not in the fallback pool."""
-    return [c for c in _RUNNERS if shutil.which(c)]
+    """Which expert CLIs are installed on PATH and not administratively disabled (in _RUNNERS
+    preference order). A council seats from these; a missing/disabled CLI is not a crash, it's just
+    not in the fallback pool."""
+    disabled = _disabled_clis()
+    return [c for c in _RUNNERS if c not in disabled and shutil.which(c)]
 
 # Prompts are fed via stdin / --prompt-file, NEVER as an argv string: a coordinated
 # mesh prompt embeds all peer contributions and routinely exceeds Linux MAX_ARG_STRLEN
@@ -110,8 +117,16 @@ def cli_expert(session_id: str, role: str, lens: str, cli: str = "codex", max_re
 
     peers_visible=False is a sealed blind round: no peer content in the prompt, no claimed reads.
     """
-    candidates = [cli] + [c for c in fallbacks if c and c != cli]
     attempts: list[str] = []
+    disabled = _disabled_clis()
+    candidates: list[str] = []
+    for candidate in dict.fromkeys([cli, *fallbacks]):
+        if not candidate:
+            continue
+        if candidate in disabled:
+            attempts.append(f"{candidate}=disabled")
+            continue
+        candidates.append(candidate)
     for current in candidates:
         run = _RUNNERS.get(current)
         if run is None or shutil.which(current) is None:
