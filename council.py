@@ -344,6 +344,36 @@ def _ground_rules(rules: str, manifest: str | None) -> str:
 # Memory/Git is an ENFORCED gate, not a lossy brief: a change that ignores the grounding manifest
 # and re-derives a named prior solution must BLOCK (cite-or-supersede). Provenance DETECTION lives
 # in the deterministic floor, not a voting seat (so it cannot be out-voted).
+def _absence_declaration(body: str) -> bool:
+    normalized = re.sub(r"\s+", " ", body.strip()).strip(".:;").lower()
+    if normalized == "none":
+        return True
+    return normalized.startswith((
+        "no prior",
+        "no stored prior",
+        "no versioned prior",
+        "none of the prior",
+        "memory is empty",
+        "memory index is empty",
+        "no git repository",
+        "not a git repository",
+    ))
+
+
+def _reference_tokens(body: str) -> list[str]:
+    toks = set(_citation_tokens(body))
+    toks.update(re.findall(r"[`'\"]([^`'\"]+)[`'\"]", body))
+    toks.update(re.findall(r"\b(?:[\w.-]+/)+[\w./-]*\b", body))
+    toks.update(re.findall(r"\b[\w./-]+\.(?:md|py|txt|json|ya?ml|toml|sh|cfg|ini|rst)\b", body, re.IGNORECASE))
+    toks.update(re.findall(r"\b(?:supersedes?|cites?|per)\s+[`'\"]?([\w./:-]+)", body, re.IGNORECASE))
+    toks.update(re.findall(r"(?:\bline\s+\d+\b|#?L\d+(?:-L?\d+)?|:\d+\b)", body, re.IGNORECASE))
+    return sorted(t.strip("`'\"") for t in toks if t.strip("`'\""))
+
+
+def _absence_grounding_item(body: str) -> bool:
+    return _absence_declaration(body) and not _reference_tokens(body)
+
+
 def _grounding_items(manifest: str | None) -> list[str]:
     """Concrete GROUNDING prior-art lines from the pre-flight manifest (NONE excluded)."""
     if not manifest:
@@ -356,7 +386,7 @@ def _grounding_items(manifest: str | None) -> list[str]:
         if head.startswith("REGRESSION_RISK") or line.strip().startswith("["):
             in_grounding = False; continue
         body = line.strip().lstrip("-* ").strip()
-        if in_grounding and body and body.upper() != "NONE":
+        if in_grounding and body and not _absence_grounding_item(body):
             items.append(body)
     return items
 
