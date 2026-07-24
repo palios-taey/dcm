@@ -6,3 +6,9 @@ __pycache__/
 build/
 dist/
 *.egg-info/
+# Council runtime inputs/outputs are OPERATOR CONTENT — runtime args, never committed
+# (council_cli.py: "Inputs are FILES (operator content is a runtime arg, never committed)").
+problem*.txt
+rules*.txt
+council_out*.txt
+*.council.out
