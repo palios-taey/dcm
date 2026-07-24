@@ -37,8 +37,9 @@ def available_clis() -> list[str]:
     disabled = _disabled_clis()
     # ep3 is an OpenAI-compatible ENDPOINT seat (the fine-tuned Taey serve), not a PATH binary — it
     # is available unless administratively disabled; the other experts must be on PATH. If the ep3
-    # endpoint is down, _run_ep3 raises CliRunError and the seat degrades like any other.
-    return [c for c in _RUNNERS if c not in disabled and (c == "ep3" or shutil.which(c))]
+    # endpoint is down, _run_ep3 raises CliRunError and the seat degrades like any other. Runnability
+    # is decided by _cli_runnable so this and cli_expert() cannot drift.
+    return [c for c in _RUNNERS if c not in disabled and _cli_runnable(c)]
 
 # Prompts are fed via stdin / --prompt-file, NEVER as an argv string: a coordinated
 # mesh prompt embeds all peer contributions and routinely exceeds Linux MAX_ARG_STRLEN
@@ -132,6 +133,27 @@ def _run_ep3(prompt: str, timeout: int = 400) -> str:
 
 _RUNNERS = {"codex": _run_codex, "gemini": _run_gemini, "claude": _run_claude, "grok": _run_grok, "ep3": _run_ep3}
 
+
+def _cli_runnable(cli: str) -> bool:
+    """Is this CLI actually invokable right now? SINGLE source of truth for available_clis() and
+    cli_expert() — they previously duplicated this test and DRIFTED: available_clis() special-cased
+    the ep3 endpoint but cli_expert()'s per-candidate guard used a bare `shutil.which(cli) is None`,
+    so it rejected a SEATED ep3 as 'unavailable' before ever calling it (ep3 is an OpenAI-compatible
+    ENDPOINT, not a PATH binary). ep3 is runnable if it has a runner; every other expert must be on
+    PATH."""
+    if cli not in _RUNNERS:
+        return False
+    return cli == "ep3" or shutil.which(cli) is not None
+
+
+# Per-CLI minimum seat timeout (seconds). ep3 is the fine-tuned Taey serve on Jetson hardware: a
+# thinking-ON decode wall of ~4.5 tok/s means a dense council contribution takes far longer than an
+# agentic CLI — measured ~764s for a ~2.8KB scope-sentinel contribution. The default 400s seat cap
+# (right for codex/claude/gemini/grok at ~60-180s) times ep3 out MID-GENERATION and forces a needless
+# fallback. Floor ep3's seat timeout to the wall-clock its hardware needs; per the seat contract we
+# never clamp ep3's OUTPUT to fit a shorter window, so the window must fit the output.
+_CLI_MIN_TIMEOUT = {"ep3": 1200}
+
 def cli_expert(session_id: str, role: str, lens: str, cli: str = "codex", max_retry: int = 4,
                *, peers_visible: bool = True, prompt_extra: str | None = None,
                parse_contribution: Callable[[str, dict], dict] | None = None,
@@ -158,9 +180,10 @@ def cli_expert(session_id: str, role: str, lens: str, cli: str = "codex", max_re
         candidates.append(candidate)
     for current in candidates:
         run = _RUNNERS.get(current)
-        if run is None or shutil.which(current) is None:
+        if not _cli_runnable(current):
             attempts.append(f"{current}=unavailable")
             continue
+        eff_timeout = max(timeout, _CLI_MIN_TIMEOUT.get(current, 0))
         try:
             for _ in range(max_retry):
                 ctx = mesh.read_session(session_id)
@@ -180,9 +203,9 @@ def cli_expert(session_id: str, role: str, lens: str, cli: str = "codex", max_re
                 if prompt_extra:
                     prompt = f"{prompt}\n\n{prompt_extra}"
                 try:
-                    content = run(prompt, timeout=timeout)
+                    content = run(prompt, timeout=eff_timeout)
                 except subprocess.TimeoutExpired as exc:
-                    raise CliRunError(f"{current} timed out after {timeout}s") from exc
+                    raise CliRunError(f"{current} timed out after {eff_timeout}s") from exc
                 # Fail-closed on an EMPTY model call (e.g. a headless refusal that exits 0): committing
                 # it would be a silent model-call failure. Treat as a CLI failure → try the next CLI.
                 if not content or not content.strip():
