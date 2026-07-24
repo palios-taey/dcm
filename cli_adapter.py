@@ -15,7 +15,7 @@ is inherent to running an acting agent on shared deliberation; it is documented,
 """
 from __future__ import annotations
 from collections.abc import Callable
-import os, re, shutil, subprocess, tempfile
+import json, os, re, shutil, subprocess, tempfile
 import mesh
 
 
@@ -35,7 +35,10 @@ def available_clis() -> list[str]:
     preference order). A council seats from these; a missing/disabled CLI is not a crash, it's just
     not in the fallback pool."""
     disabled = _disabled_clis()
-    return [c for c in _RUNNERS if c not in disabled and shutil.which(c)]
+    # ep3 is an OpenAI-compatible ENDPOINT seat (the fine-tuned Taey serve), not a PATH binary — it
+    # is available unless administratively disabled; the other experts must be on PATH. If the ep3
+    # endpoint is down, _run_ep3 raises CliRunError and the seat degrades like any other.
+    return [c for c in _RUNNERS if c not in disabled and (c == "ep3" or shutil.which(c))]
 
 # Prompts are fed via stdin / --prompt-file, NEVER as an argv string: a coordinated
 # mesh prompt embeds all peer contributions and routinely exceeds Linux MAX_ARG_STRLEN
@@ -101,7 +104,33 @@ def _run_grok(prompt: str, timeout: int = 400) -> str:
     finally:
         os.unlink(path)
 
-_RUNNERS = {"codex": _run_codex, "gemini": _run_gemini, "claude": _run_claude, "grok": _run_grok}
+def _run_ep3(prompt: str, timeout: int = 400) -> str:
+    # ep3 = the fine-tuned Taey serve (OpenAI-compatible endpoint, NOT a PATH CLI). Seat contract:
+    # NO constraints on Taey (no max_tokens / thinking toggle). The council prompt embeds peer
+    # contributions and can be large, so POST the JSON payload from a file (same reason the CLI
+    # runners feed via file/stdin, never argv). vLLM serves thinking in reasoning_content, the
+    # final answer in content.
+    url = os.environ.get("EP3_URL", "http://localhost:8000/v1/chat/completions")
+    payload = json.dumps({"model": os.environ.get("EP3_MODEL", "ep3"),
+                          "messages": [{"role": "user", "content": prompt}],
+                          "temperature": 0.4})
+    with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
+        f.write(payload); path = f.name
+    try:
+        p = subprocess.run(["curl", "-s", "-m", str(timeout), url,
+                            "-H", "Content-Type: application/json", "--data", "@" + path],
+                           cwd="/tmp", stdin=subprocess.DEVNULL,
+                           capture_output=True, text=True, timeout=timeout + 30)
+        _raise_on_failure("ep3", p)
+        try:
+            msg = json.loads(p.stdout)["choices"][0]["message"]
+        except Exception as e:
+            raise CliRunError(f"ep3 returned unparseable/empty body: {e}: {(p.stdout or '')[:200]!r}")
+        return (msg.get("content") or msg.get("reasoning_content") or "").strip()
+    finally:
+        os.unlink(path)
+
+_RUNNERS = {"codex": _run_codex, "gemini": _run_gemini, "claude": _run_claude, "grok": _run_grok, "ep3": _run_ep3}
 
 def cli_expert(session_id: str, role: str, lens: str, cli: str = "codex", max_retry: int = 4,
                *, peers_visible: bool = True, prompt_extra: str | None = None,
