@@ -22,6 +22,18 @@ import json
 import council
 
 
+def _seat_attribution(ledger: dict) -> dict:
+    """Which CLI actually produced each seat's contribution, for a verifiable published record.
+    Each blind-round record carries the producing `cli` (cli_expert return record); the per-seat
+    role->cli map plus the runtime decorrelation (clis_used / distinct_models, computed but not
+    otherwise surfaced) make a council auditable after the fact — you can confirm a seat that is
+    configured to a given model (e.g. scope-sentinel=ep3) actually ran it, or fell back."""
+    ledger = ledger or {}
+    seats = [{"role": r.get("role"), "cli": r.get("cli")}
+             for r in ledger.get("blind_round", []) if isinstance(r, dict)]
+    return {"per_seat": seats, "decorrelation": ledger.get("decorrelation")}
+
+
 def _emit(status: str, body: str, ledger: dict) -> int:
     print("=== STATUS:", status, "===\n")
     print(body)
@@ -29,6 +41,10 @@ def _emit(status: str, body: str, ledger: dict) -> int:
     if coord is not None:
         print("\n=== COORDINATION (honest) ===")
         print(json.dumps(coord, indent=2, default=str))
+    attribution = _seat_attribution(ledger)
+    if attribution["per_seat"] or attribution["decorrelation"]:
+        print("\n=== SEAT ATTRIBUTION (who ran each role) ===")
+        print(json.dumps(attribution, indent=2, default=str))
     # not-published is a non-zero exit so a caller's pipeline halts on it.
     return 0 if status == "published" else 1
 

@@ -41,7 +41,14 @@ EXPAND_ROLES = {
     "git-historian": {"seat": "Git Historian", "cli": "claude",
         "lens": "You are the GIT-HISTORIAN reviewer (Foundation split). Own regression-reintroduction: "
                 "check git history for a deliberate prior fix this change silently undoes."},
-    "scope-sentinel": {"seat": "Scope Sentinel", "cli": "gemini",
+    # scope-sentinel is seated to ep3 (the fine-tuned Taey serve) as its first FIRST-CLASS council
+    # primary (treasurer run-through ruling 2026-07-24). Chosen because it is a pure reason-over-the-
+    # -artifact lens (scope-semantics of the provided diff/plan) that needs NO host/git/file access —
+    # ep3 is an OpenAI-compatible endpoint with no shell, unlike the agentic CLIs. It carries no
+    # unilateral safety-veto (blast-shield/scope-blast hold those), so an as-yet-unproven seat cannot
+    # single-handedly block a council, and its Scope-split sibling blast-shield stays grok so the split
+    # stays cross-model decorrelated. Reversible: revert this one cli field to "gemini" to unseat.
+    "scope-sentinel": {"seat": "Scope Sentinel", "cli": "ep3",
         "lens": "You are the SCOPE-SENTINEL reviewer (Scope split). Own scope-semantics: does the diff "
                 "stay within the declared change boundary; flag scope creep into unrelated surfaces."},
     "blast-shield": {"seat": "Blast Shield", "cli": "grok",
