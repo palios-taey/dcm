@@ -15,7 +15,7 @@ is inherent to running an acting agent on shared deliberation; it is documented,
 """
 from __future__ import annotations
 from collections.abc import Callable
-import json, os, re, shutil, subprocess, tempfile
+import json, os, re, shutil, subprocess, tempfile, time
 import mesh
 
 
@@ -105,29 +105,102 @@ def _run_grok(prompt: str, timeout: int = 400) -> str:
     finally:
         os.unlink(path)
 
+def _capture_dir() -> str:
+    """Where per-call generation transcripts land. Operator-configurable; defaults under the system
+    temp dir so nothing operator-specific is baked into this repo."""
+    d = os.environ.get("DCM_CAPTURE_DIR") or os.path.join(tempfile.gettempdir(), "dcm-captures")
+    os.makedirs(d, exist_ok=True)
+    return d
+
+
+def _parse_ep3_stream(raw: str) -> tuple[str, str, dict]:
+    """Reconstruct (content, reasoning, meta) from however much of an OpenAI SSE stream arrived.
+
+    Deliberately tolerant: a truncated final line, a stream cut mid-flight by a timeout, or a
+    missing [DONE] all still yield every delta that DID arrive. That is the point — a partial
+    transcript is evidence; a discarded one is not."""
+    content, reasoning, meta = [], [], {}
+    for line in raw.splitlines():
+        line = line.strip()
+        if not line.startswith("data:"):
+            continue
+        body = line[5:].strip()
+        if not body or body == "[DONE]":
+            continue
+        try:
+            chunk = json.loads(body)
+        except ValueError:
+            continue          # a torn final chunk loses that fragment, never the ones before it
+        if chunk.get("usage"):
+            meta["usage"] = chunk["usage"]
+        for choice in chunk.get("choices") or []:
+            delta = choice.get("delta") or {}
+            if delta.get("content"):
+                content.append(delta["content"])
+            if delta.get("reasoning_content") or delta.get("reasoning"):
+                reasoning.append(delta.get("reasoning_content") or delta.get("reasoning"))
+            if choice.get("finish_reason"):
+                meta["finish_reason"] = choice["finish_reason"]
+    return "".join(content), "".join(reasoning), meta
+
+
 def _run_ep3(prompt: str, timeout: int = 400) -> str:
     # ep3 = the fine-tuned Taey serve (OpenAI-compatible endpoint, NOT a PATH CLI). Seat contract:
     # NO constraints on Taey (no max_tokens / thinking toggle). The council prompt embeds peer
     # contributions and can be large, so POST the JSON payload from a file (same reason the CLI
-    # runners feed via file/stdin, never argv). vLLM serves thinking in reasoning_content, the
-    # final answer in content.
+    # runners feed via file/stdin, never argv).
+    #
+    # STREAMED + CAPTURED TO DISK, deliberately: this seat is the slowest in the council (a dense
+    # contribution has measured ~13 minutes), so it is the one most likely to hit a timeout — and a
+    # buffered request that times out returns NOTHING, destroying the whole generation. Streaming to
+    # a capture file means a timeout, disconnect or crash still leaves the full partial transcript,
+    # plus finish_reason / usage / wall-clock for the run. Capture happens BEFORE any raise, so a
+    # failed call leaves more evidence than a silent one, not less.
     url = os.environ.get("EP3_URL", "http://localhost:8000/v1/chat/completions")
     payload = json.dumps({"model": os.environ.get("EP3_MODEL", "ep3"),
                           "messages": [{"role": "user", "content": prompt}],
-                          "temperature": 0.4})
+                          "temperature": 0.4,
+                          "stream": True,
+                          "stream_options": {"include_usage": True}})
     with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
         f.write(payload); path = f.name
+    cap = os.path.join(_capture_dir(), f"ep3-{os.getpid()}-{int(time.time()*1000)}")
+    started = time.time()
+    proc = None
     try:
-        p = subprocess.run(["curl", "-s", "-m", str(timeout), url,
-                            "-H", "Content-Type: application/json", "--data", "@" + path],
-                           cwd="/tmp", stdin=subprocess.DEVNULL,
-                           capture_output=True, text=True, timeout=timeout + 30)
-        _raise_on_failure("ep3", p)
         try:
-            msg = json.loads(p.stdout)["choices"][0]["message"]
-        except Exception as e:
-            raise CliRunError(f"ep3 returned unparseable/empty body: {e}: {(p.stdout or '')[:200]!r}")
-        return (msg.get("content") or msg.get("reasoning_content") or "").strip()
+            # --no-buffer so deltas land in the capture file as they arrive, not at completion.
+            proc = subprocess.run(["curl", "-s", "--no-buffer", "-m", str(timeout), url,
+                                   "-H", "Content-Type: application/json", "--data", "@" + path,
+                                   "-o", cap + ".sse"],
+                                  cwd="/tmp", stdin=subprocess.DEVNULL,
+                                  capture_output=True, text=True, timeout=timeout + 30)
+        finally:
+            elapsed = round(time.time() - started, 1)
+            raw = ""
+            try:
+                with open(cap + ".sse") as fh:
+                    raw = fh.read()
+            except OSError:
+                pass
+            content, reasoning, meta = _parse_ep3_stream(raw)
+            meta.update({"elapsed_s": elapsed, "url": url,
+                         "content_chars": len(content), "reasoning_chars": len(reasoning),
+                         "curl_rc": None if proc is None else proc.returncode})
+            try:
+                with open(cap + ".json", "w") as fh:
+                    json.dump({"meta": meta, "content": content, "reasoning": reasoning}, fh)
+            except OSError:
+                pass          # capture is best-effort; never let recording break the call
+        if proc.returncode != 0:
+            raise CliRunError(f"ep3 curl exited {proc.returncode} after {elapsed}s "
+                              f"(partial transcript preserved at {cap}.json: "
+                              f"{len(content)} content / {len(reasoning)} reasoning chars)")
+        out = (content or reasoning).strip()
+        if not out:
+            raise CliRunError(f"ep3 produced no text in {elapsed}s "
+                              f"(transcript at {cap}.json, finish_reason={meta.get('finish_reason')})")
+        return out
     finally:
         os.unlink(path)
 
