@@ -20,7 +20,7 @@ pip install .         # deps (neo4j) + the dcm-council / dcm-mesh entry points
 Mesh config: `DCM_NEO4J_URI` (default `bolt://localhost:7687`), `DCM_NEO4J_USER` /
 `DCM_NEO4J_PASSWORD` (optional on loopback; a non-loopback URI with no auth is REFUSED,
 fail-closed). The served-model reference adapter additionally reads `TAEY_DCM_URL` and
-`TAEY_DCM_MODEL`.
+`TAEY_DCM_MODEL`; `TAEY_DCM_URL` is required and must not address the executive proxy.
 
 ## Code map
 | File | What it is |

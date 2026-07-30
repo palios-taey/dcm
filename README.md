@@ -105,7 +105,8 @@ responses are not DCM deliberation.
 ## Adoption / config (env)
 - `DCM_NEO4J_URI` (default `bolt://localhost:7687`) — the mesh graph.
 - `DCM_NEO4J_USER` / `DCM_NEO4J_PASSWORD` — Neo4j auth (optional on loopback).
-- `TAEY_DCM_URL` (default `http://localhost:8765/v1/chat/completions`) — served model for `taey_adapter`.
+- `TAEY_DCM_URL` (**required by `taey_adapter`**) — dedicated council-participant
+  OpenAI-compatible endpoint. It must not be the executive proxy.
 - `TAEY_DCM_MODEL` (default `ep3`) — stable served-model alias; promote checkpoints behind the
   alias rather than coupling council code to a checkpoint path.
 - **Security — fail-closed:** a **non-loopback** `DCM_NEO4J_URI` with **no auth** is *refused*

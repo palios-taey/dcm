@@ -12,11 +12,16 @@ from __future__ import annotations
 import os, re, json, urllib.request
 import mesh
 
-TAEY_URL = os.environ.get("TAEY_DCM_URL", "http://localhost:8765/v1/chat/completions")  # set to your Taey soma_proxy endpoint
+TAEY_URL = os.environ.get("TAEY_DCM_URL", "").strip()
 TAEY_MODEL = os.environ.get("TAEY_DCM_MODEL", "ep3")
 
 
 def _ask_taey(system_extra: str, user: str, max_tokens: int = 1500, timeout: int = 300) -> str:
+    if not TAEY_URL:
+        raise RuntimeError(
+            "TAEY_DCM_URL is required; set it to the dedicated council-participant "
+            "OpenAI-compatible endpoint"
+        )
     body = json.dumps({
         "model": TAEY_MODEL,
         "messages": [

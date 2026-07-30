@@ -127,9 +127,31 @@ DCM addresses a configured OpenAI-compatible endpoint and stable model alias. A 
 checkpoint is promoted behind that alias; council code, role identity, UI routes, and graph
 schema do not change for each model release.
 
+**A council participant must never address the executive's own proxy.** The executive can
+hold a request open while it waits for the council. Routing a supporting seat back through
+that proxy creates a dependency cycle: the seat waits on the executive request that is waiting
+on the seat. This can look like a quiet service hang rather than a connection error. Supporting
+seats use a dedicated participant endpoint that reaches the intended inference backend without
+entering the executive's request path.
+
 Participant requests need unique run IDs, cancellation-capable clients, bounded timeouts, and
 observable terminal states. A controller must not silently fall back to a different endpoint,
 model, role, or ledger.
+
+### Target deployment topology and capacity
+
+The target application topology assigns the executive plus seven local deliberation peers to
+one primary, wired inference node. A separate inference node is reserved for up to eight remote
+task executors after Main delegates concrete work. Moving the deliberation seats to the task
+executor node changes the ratified topology and requires an explicit architecture revision.
+
+The primary node must demonstrate at least eight overlapping sequence slots for one executive
+plus seven supporting requests. Configured environment values or unit templates are not proof
+of the effective runtime ceiling; acceptance reads the launched server arguments and observes
+the production scheduler under an eight-request workload. If the capacity gate fails, startup
+fails loudly rather than silently serializing the council. An amendment replacement starts only
+after its superseded request releases a slot, so amendment handling does not assume a ninth
+slot.
 
 ## Observable states
 
