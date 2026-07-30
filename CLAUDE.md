@@ -16,8 +16,10 @@ python3 -m venv .venv && . .venv/bin/activate   # venv required on PEP-668 syste
 pip install .         # deps (neo4j) + the dcm-council / dcm-mesh entry points
 ./setup.sh            # checks python deps (neo4j) + a reachable DCM_NEO4J_URI, prints the next step
 ```
-Env (the only config): `DCM_NEO4J_URI` (default `bolt://localhost:7687`), `DCM_NEO4J_USER` /
-`DCM_NEO4J_PASSWORD` (optional on loopback; a non-loopback URI with no auth is REFUSED, fail-closed).
+Mesh config: `DCM_NEO4J_URI` (default `bolt://localhost:7687`), `DCM_NEO4J_USER` /
+`DCM_NEO4J_PASSWORD` (optional on loopback; a non-loopback URI with no auth is REFUSED,
+fail-closed). The served-model reference adapter additionally reads `TAEY_DCM_URL` and
+`TAEY_DCM_MODEL`; keep deployment endpoints and checkpoint paths in runtime configuration.
 
 ## Code map
 | File | What it is |
@@ -29,6 +31,9 @@ Env (the only config): `DCM_NEO4J_URI` (default `bolt://localhost:7687`), `DCM_N
 | `platform_dcm.py` | orchestrator for fixing one driver: `produce` (a codex producer in a target worktree, verified on REAL runs — production is the oracle) + `audit` (blind diff audit through the mesh on the FULL 9-reviewer roster). |
 | `scaling.py` | the roster is the FULL 9-role defined library, ALWAYS (`reviewer_roster_for_tier` returns it for every tier; `tier_for` never shrinks — high blast radius only adds a 2nd producer). No 3/4-seat option — that's the rejected stub. |
 | `council_cli.py` | the zero-improvisation invocation: `plan --problem-file --rules-file` / `review --task --artifact-file --rules-file`. Seats the full council; no panel knob. See [`SKILL.md`](./SKILL.md). |
+| `taey_adapter.py` | synchronous served-model reference adapter. A stale CAS repeats the entire model request; this is not a cancellation-capable concurrent controller. |
+| `design/TAEY_TRANSPORT_CONTRACT.md` | required lifecycle for seven concurrent supporting seats, revision waves, amendments, cancellation, stable model aliasing, and UI projection. |
+| `design/GRAPH_HISTORY_MIGRATION.md` | non-destructive, namespace-scoped provenance contract for moving DCM history between graph deployments. |
 
 ## Common commands
 ```bash
@@ -45,6 +50,11 @@ python mesh_cli.py contribute <session_id> <role> <read_version> --content -   #
 ## Working rules (non-negotiable)
 - **Read before write.** Always `read` for the live `version`, build on peers, `contribute` with that
   version. On `StaleReadError` re-read + redo — someone moved while you thought.
+- **CAS gates commits, not compute.** It does not stop an in-flight HTTP request. Do not claim that
+  the synchronous served-model adapter supports interactive concurrent deliberation; implement and
+  validate the transport contract before making that claim.
+- **History is provenance.** Never repoint DCM at an empty graph or bulk-copy a co-resident graph.
+  Follow the graph-history migration contract and retain the source for rollback.
 - **Production is the oracle. NO synthetic tests.** Verify a fix by running the real workload on the
   real target, not a fixture you wrote. A passing self-authored test is not evidence.
 - **Evidence-gated.** A concern is a gate that closes only on evidence (a real green run, a trace).

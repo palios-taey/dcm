@@ -288,6 +288,46 @@ Expected hardening:
 - Block when critical environment facts are absent.
 - Emit a missing-facts report instead of a plan when ground truth is insufficient.
 
+### 11. The served-model adapter is synchronous and has no amendment cancellation
+
+Severity: HIGH
+
+Observed:
+
+- `taey_adapter.py` performs a blocking `urllib.request.urlopen` call.
+- A `StaleReadError` is detected only after that inference finishes and the adapter attempts
+  to contribute.
+- The retry loop re-reads the session and repeats the full inference.
+- The adapter has no run identity, round frontier, amendment revision, cancellation handle,
+  or serving-slot release confirmation.
+
+Inferred:
+
+- Starting several served-model experts concurrently can waste inference on stale work and
+  trend toward serial retries under the current global CAS.
+- A user amendment cannot reliably stop old work or exclude it from synthesis without an
+  external revision-aware controller.
+- Seven successful responses alone do not demonstrate DCM deliberation because they may never
+  have read or engaged one another.
+
+Reproduction notes:
+
+- Start multiple served-model experts from the same session version.
+- Observe that the first commit advances the CAS and slower siblings complete their HTTP calls
+  before learning that they are stale.
+- Amend the prompt during an in-flight request and observe that the adapter has no cancellation
+  or supersession operation.
+
+Expected hardening:
+
+- Implement the wave-aware lifecycle in `design/TAEY_TRANSPORT_CONTRACT.md`.
+- Permit sibling contributions to land against one immutable round frontier without serial
+  re-inference, while requiring the next round to read the completed frontier.
+- Persist request revisions, cancel superseded HTTP work, confirm serving-slot release, and
+  exclude stale revisions from synthesis.
+- Validate overlapping inference, peer-engaging revision waves, amendments, and UI/graph parity
+  on the production serving path.
+
 ## Resolved or monitored historical findings
 
 These appeared in earlier consultation responses but should not be counted as open functional issues without fresh evidence:

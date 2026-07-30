@@ -1,20 +1,19 @@
-"""Taey -> DCM adapter: runs the REAL Taey model (served via soma_proxy on Thor2:8765)
-as a first-class mesh expert, under the SAME staleness gate as every other participant.
+"""Reference adapter for a model served behind an OpenAI-compatible endpoint.
 
-This is the P2 Taey-on-the-mesh path: an instance of Taey reads peers from the mesh,
-reasons AS Taey (the soma_proxy injects Taey's persona + ISMA tools), and contributes —
-the adapter owns the read+commit so Taey physically can't bypass the read-before-write
-contract (adoption enforced for Taey the way the staleness gate enforces it for code agents).
+The adapter reads a DCM session, asks the model to reason through one expert lens, and
+commits through the same ``mesh.contribute(read_version=...)`` gate as CLI participants.
 
-Same chokepoint as the Claude-Code Task contract + the (future) Chats consult adapter:
-every participant type funnels through mesh.contribute(read_version=...).
+This module is intentionally synchronous. A stale commit causes a complete re-read and
+inference retry; the CAS does not cancel an HTTP request that is already computing. Use an
+asynchronous, revision-aware controller for interactive concurrent councils. The required
+transport behavior is specified in ``design/TAEY_TRANSPORT_CONTRACT.md``.
 """
 from __future__ import annotations
 import os, re, json, urllib.request
 import mesh
 
 TAEY_URL = os.environ.get("TAEY_DCM_URL", "http://localhost:8765/v1/chat/completions")  # set to your Taey soma_proxy endpoint
-TAEY_MODEL = os.environ.get("TAEY_DCM_MODEL", "/models/taey-phase-combined-v1")
+TAEY_MODEL = os.environ.get("TAEY_DCM_MODEL", "ep3")
 
 
 def _ask_taey(system_extra: str, user: str, max_tokens: int = 1500, timeout: int = 300) -> str:
@@ -33,9 +32,10 @@ def _ask_taey(system_extra: str, user: str, max_tokens: int = 1500, timeout: int
 
 
 def taey_expert(session_id: str, role: str, lens: str, max_retry: int = 4) -> str:
-    """Taey participates as a mesh expert. Reads peers, reasons through `lens`, contributes.
-    Retries on StaleReadError (re-reads + incorporates peers who arrived) — same as any expert.
-    Returns the contrib_id.
+    """Run one synchronous served-model participant and return its contribution ID.
+
+    A stale commit repeats the full model call after re-reading the mesh. This preserves
+    the current CAS invariant but does not provide cancellation or concurrent wave control.
     """
     for _ in range(max_retry):
         ctx = mesh.read_session(session_id)

@@ -17,8 +17,10 @@ python3 -m venv .venv && . .venv/bin/activate   # venv required on PEP-668 syste
 pip install .         # deps (neo4j) + the dcm-council / dcm-mesh entry points
 ./setup.sh            # checks deps + a reachable DCM_NEO4J_URI, prints the next step
 ```
-Config is one env group: `DCM_NEO4J_URI` (default `bolt://localhost:7687`), `DCM_NEO4J_USER` /
-`DCM_NEO4J_PASSWORD` (optional on loopback; a non-loopback URI with no auth is REFUSED, fail-closed).
+Mesh config: `DCM_NEO4J_URI` (default `bolt://localhost:7687`), `DCM_NEO4J_USER` /
+`DCM_NEO4J_PASSWORD` (optional on loopback; a non-loopback URI with no auth is REFUSED,
+fail-closed). The served-model reference adapter additionally reads `TAEY_DCM_URL` and
+`TAEY_DCM_MODEL`.
 
 ## Code map
 | File | What it is |
@@ -30,6 +32,9 @@ Config is one env group: `DCM_NEO4J_URI` (default `bolt://localhost:7687`), `DCM
 | `platform_dcm.py` | `produce` (a codex producer, verified on REAL runs) + `audit` (blind diff audit on the FULL 9-reviewer roster). |
 | `scaling.py` | the roster is the FULL 9-role library ALWAYS; no 3/4-seat option (the rejected stub). High blast radius only adds a 2nd producer, never shrinks the panel. |
 | `council_cli.py` | the zero-improvisation invocation: `plan` / `review` (full council; no panel knob). See `SKILL.md`. |
+| `taey_adapter.py` | synchronous served-model reference adapter; stale CAS retries repeat inference. |
+| `design/TAEY_TRANSPORT_CONTRACT.md` | required concurrent served-model lifecycle; not implemented by the reference adapter. |
+| `design/GRAPH_HISTORY_MIGRATION.md` | non-destructive DCM-history migration and exact parity gates. |
 
 ## Common commands
 ```bash
@@ -43,6 +48,10 @@ python mesh_cli.py contribute <session_id> <role> <read_version> --content -
 ## Working rules (non-negotiable)
 - **Read before write.** `read` for the live `version`, build on peers, `contribute` with that version.
   On `StaleReadError` re-read + redo — someone moved while you thought.
+- **CAS gates commits, not compute.** It cannot cancel a model request already in flight. Do not
+  describe the reference adapter as a concurrent interactive council.
+- **History is provenance.** Migrate only the DCM namespace, verify exact parity, and retain the
+  source. Never repoint a deployment at an empty graph and call it a migration.
 - **Production is the oracle. NO synthetic tests.** Verify a fix by running the real workload on the
   real target, not a fixture you wrote.
 - **Evidence-gated.** A concern is a gate that closes only on evidence. No vote-away on correctness;
