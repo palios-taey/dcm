@@ -145,13 +145,18 @@ one primary, wired inference node. A separate inference node is reserved for up 
 task executors after Main delegates concrete work. Moving the deliberation seats to the task
 executor node changes the ratified topology and requires an explicit architecture revision.
 
-The primary node must demonstrate at least eight overlapping sequence slots for one executive
-plus seven supporting requests. Configured environment values or unit templates are not proof
-of the effective runtime ceiling; acceptance reads the launched server arguments and observes
-the production scheduler under an eight-request workload. If the capacity gate fails, startup
-fails loudly rather than silently serializing the council. An amendment replacement starts only
-after its superseded request releases a slot, so amendment handling does not assume a ninth
-slot.
+The current target has demonstrated exactly eight simultaneous inference sequences in the
+serving scheduler, with additional requests queued. That is zero headroom for one executive
+plus seven supporting requests. Configured environment values, client-side overlapping request
+lifetimes, or unit templates are not proof of the effective runtime ceiling: a queued request
+still overlaps from the client's perspective. Acceptance reads the launched server arguments
+and the server scheduler's running/waiting counts under an over-capacity workload.
+
+If the eight-sequence capacity gate fails, startup fails loudly rather than silently serializing
+the council. Synthesis cannot overlap a full wave unless a slot has been released. An amendment
+replacement starts only after server-side scheduler evidence shows its superseded request
+released a slot; closing the client connection alone is insufficient and amendment handling
+must not assume a ninth slot.
 
 ## Observable states
 
