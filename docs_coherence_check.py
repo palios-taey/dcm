@@ -20,20 +20,15 @@ mc = rd("mesh_cli.py") or ""
 real_sub = set(re.findall(r'add_parser\("(\w+)"', mc))
 for cmd in re.findall(r"mesh_cli\.py (\w+)", claude):
     if real_sub and cmd not in real_sub: fail.append(f"CLAUDE.md uses `mesh_cli.py {cmd}` but it's not a real subcommand {sorted(real_sub)}")
-# 4. documented platform_dcm subcommands real
-pd = rd("platform_dcm.py") or ""
-pd_sub = set(re.findall(r'add_parser\("(\w+)"', pd))
-for cmd in re.findall(r"platform_dcm\.py (\w+)", claude):
-    if pd_sub and cmd not in pd_sub: fail.append(f"CLAUDE.md uses `platform_dcm.py {cmd}` but it's not a real subcommand {sorted(pd_sub)}")
-# 5. documented env vars must appear in mesh.py
+# 4. documented env vars must appear in mesh.py
 mesh = rd("mesh.py") or ""
 for env in set(re.findall(r"`(DCM_NEO4J_[A-Z]+)`", claude)):
     if env not in mesh: fail.append(f"CLAUDE.md documents env `{env}` but mesh.py never reads it")
-# 6. the AI operating guides must be tracked in git (not gitignored)
+# 5. the AI operating guides must be tracked in git (not gitignored)
 gi = rd(".gitignore") or ""
 if re.search(r"(?m)^CLAUDE\.md$", gi): fail.append("CLAUDE.md is gitignored — the AI operating guide MUST be in the public repo")
 if re.search(r"(?m)^AGENTS\.md$", gi): fail.append("AGENTS.md is gitignored — the codex/gemini operating guide MUST be in the public repo")
-# 7. AGENTS.md (codex/gemini entry point) must exist + point at CLAUDE.md, never revert to orphaned tooling boilerplate
+# 6. AGENTS.md (codex/gemini entry point) must exist + point at CLAUDE.md
 agents = rd("AGENTS.md")
 if agents is None: fail.append("AGENTS.md missing — codex/gemini read it as their entry point")
 elif "CLAUDE.md" not in agents: fail.append("AGENTS.md does not reference CLAUDE.md — it must point CLI agents at the canonical operating guide")
@@ -42,7 +37,7 @@ import subprocess
 tracked = subprocess.run(["git", "-C", ROOT, "ls-files", "--error-unmatch", "AGENTS.md"],
                          capture_output=True).returncode == 0
 if agents is not None and not tracked: fail.append("AGENTS.md is untracked — every doc is a committed public artifact (nothing local)")
-# 8. SKILL.md (the run-a-council skill) must exist, be tracked, and use real council_cli subcommands
+# 7. SKILL.md (the run-a-council skill) must exist, be tracked, and use real council_cli subcommands
 cc_sub = set(re.findall(r'add_parser\("(\w+)"', rd("council_cli.py") or ""))
 skill = rd("SKILL.md")
 if skill is None: fail.append("SKILL.md missing — the run-a-council skill must exist (callers must not improvise)")
@@ -53,7 +48,7 @@ if re.search(r"(?m)^SKILL\.md$", gi): fail.append("SKILL.md is gitignored — th
 if skill is not None and subprocess.run(["git", "-C", ROOT, "ls-files", "--error-unmatch", "SKILL.md"],
                                         capture_output=True).returncode != 0:
     fail.append("SKILL.md is untracked — every doc is a committed public artifact")
-# 9. README.md (the public front door) must exist, name real .py files, point at the invocation,
+# 8. README.md (the public front door) must exist, name real .py files, point at the invocation,
 #    and NOT carry the reverted sandbox claim (we run full-access; "sandbox before seating" was wrong)
 readme = rd("README.md")
 if readme is None:
@@ -75,7 +70,7 @@ else:
     for link in re.findall(r"\]\(\.?/?([A-Za-z0-9_./-]+\.md)\)", readme):
         if not os.path.exists(os.path.join(ROOT, link)):
             fail.append(f"README links to `{link}` but it does not exist")
-# 9b. INSTALLABLE: a skeptic pip-installs FIRST. pyproject.toml must exist + declare the entry points it names.
+# 8b. INSTALLABLE: a skeptic pip-installs FIRST. pyproject.toml must exist + declare the entry points it names.
 pyproject = rd("pyproject.toml")
 if pyproject is None:
     fail.append("pyproject.toml missing — `pip install .` fails before any doc is read (install = the first slop gate)")
@@ -84,7 +79,7 @@ else:
         if not os.path.exists(os.path.join(ROOT, f"{mod}.py")):
             fail.append(f"pyproject entry point names `{mod}:main` but {mod}.py does not exist")
     if rd("requirements.txt") is None: fail.append("requirements.txt missing (README offers `pip install -r requirements.txt`)")
-# 10. THE FLOOR INVARIANT (mechanical — a tiny council can NEVER come back): the canonical roster and
+# 9. THE FLOOR INVARIANT (mechanical — a tiny council can NEVER come back): the canonical roster and
 #     every scaling tier must seat >= 8 reviewers. A 3- or 4-seat "council" is the rejected stub.
 try:
     import importlib, council as _c, scaling as _s

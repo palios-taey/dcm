@@ -1,5 +1,5 @@
 """scaling — DCM roster. The council ALWAYS seats the full defined-role library (9 reviewers); blast
-radius only adds a second producer for generation, it NEVER shrinks the panel. ROUND2_SYNTHESIS.md §4.
+radius only adds a second producer for generation; it never shrinks the panel.
 
 There is no 3- or 4-seat "council" — that is the stub Jesse rejected (8–12 by blast radius, defined
 roles). Every council seats all 9 reviewers — Foundation split→Memory-Scout + Git-Historian, Scope

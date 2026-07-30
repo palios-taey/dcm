@@ -30,7 +30,6 @@ configuration.
 | `mesh_cli.py` | the agent ⇄ mesh interface: `start` / `read` / `contribute` / `status` / `publish`. How a CLI expert (or you) joins a session. |
 | `cli_adapter.py` | runs a real CLI as a mesh expert (`cli_expert`): reads the session, prompts the CLI, commits its output via CAS. Prompts go via stdin / `--prompt-file` (never argv — coordinated prompts exceed MAX_ARG_STRLEN). gemini needs `--skip-trust`. **Degrades, doesn't crash:** a seat whose CLI is down/rate-limited/empty falls back to another installed CLI (`fallbacks`); `available_clis()` detects what's installed; only-claude → single-model (labeled in `ledger.decorrelation`). |
 | `council.py` | `council_plan` / `council_review`: seat the roster (validated bases; reviewers ≠ producer base), **Foundation pre-flight grounding** → **cite-or-block citation gate** (uncited named prior art BLOCKS) → blind round (grounded by the manifest) → reveal/resolution, evidence-gated `publish_final`. `tier=` scales the roster. |
-| `platform_dcm.py` | orchestrator for fixing one driver: `produce` (a codex producer in a target worktree, verified on REAL runs — production is the oracle) + `audit` (blind diff audit through the mesh on the FULL 9-reviewer roster). |
 | `scaling.py` | the roster is the FULL 9-role defined library, ALWAYS (`reviewer_roster_for_tier` returns it for every tier; `tier_for` never shrinks — high blast radius only adds a 2nd producer). No 3/4-seat option — that's the rejected stub. |
 | `council_cli.py` | the zero-improvisation invocation: `plan --problem-file --rules-file` / `review --task --artifact-file --rules-file`. Seats the full council; no panel knob. See [`SKILL.md`](./SKILL.md). |
 | `taey_adapter.py` | synchronous served-model reference adapter. A stale CAS repeats the entire model request; this is not a cancellation-capable concurrent controller. |
@@ -39,10 +38,9 @@ configuration.
 
 ## Common commands
 ```bash
-# run a blind N-seat audit of a diff (real CLIs through the mesh)
-python platform_dcm.py audit --diff-file <patch> --topic "<what>"   # full 9-reviewer roster, always
-# run a producer that implements + verifies on real runs (no synthetic tests)
-python platform_dcm.py produce --target-repo <worktree> --prompt-file <prompt>
+# run the supported full council (real CLIs through the mesh)
+python council_cli.py plan --problem-file <problem> --rules-file <rules>
+python council_cli.py review --task "<what>" --artifact-file <artifact> --rules-file <rules>
 # drive the mesh directly
 python mesh_cli.py start "<topic>" "<payload>"        # -> session_id
 python mesh_cli.py read <session_id>                  # peers + version (read before you write)
@@ -62,9 +60,10 @@ python mesh_cli.py contribute <session_id> <role> <read_version> --content -   #
 - **Evidence-gated.** A concern is a gate that closes only on evidence (a real green run, a trace).
   No vote-away on correctness; safety-veto is unilateral; deadlock escalates, never manufactures consensus.
 - **Report Observed / Inferred / Unknown.** Never inflate process into outcome.
-- **Public repo.** This is `palios-taey/dcm`, public. Every change is a scrubbed public commit pushed to
-  origin — no operator paths, IPs, internal repo names, or secrets. `gitleaks` + an internal-term grep
-  must be clean before push. Operator-specific run inputs are runtime args, never committed.
+- **Public-safe boundary.** Repository visibility is deployment state, not permission to commit
+  operator paths, IPs, internal repo names, or secrets. Every change must be safe for public release;
+  `gitleaks` plus a portability scan must be clean before push. Operator-specific run inputs are
+  runtime args, never committed.
 
 ## Verification
 ```bash

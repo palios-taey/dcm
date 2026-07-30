@@ -1,344 +1,179 @@
-# DCM — Known Limitations & Roadmap (sweep dated 2026-07-01)
+# DCM — Known Limitations
 
-> We run this tool against itself and write down what breaks, with severities and repro. This is the
-> honest gap ledger with fix paths, not a defect confession — a project that hides its known issues
-> is the one to distrust. Each item is labeled Observed / Inferred / Unknown.
-
-Scope: known limitations from operational experience, council runs, eval artifacts, and current implementation review. This is not the static packaging/CI/hardcode gap inventory.
+Current implementation sweep: 2026-07-30. This ledger covers the supported runtime surface, not
+historical consultations, evaluation harnesses, or advisory orchestration experiments. Those remain
+in version-control history as research provenance.
 
 Truth register:
 
-- Observed: directly present in repo artifacts or current source.
-- Inferred: likely operational consequence from observed behavior.
-- Unknown: not proven by the available artifacts.
+- **Observed:** directly verified in current source or live execution.
+- **Inferred:** a likely consequence of observed behavior.
+- **Unknown:** not established by current evidence.
 
-Primary sources reviewed: `design/DCM_VALIDATION_VERDICT.md`, `design/ROUND2_SYNTHESIS.md`, `consult/responses/*.md`, `eval/ORACLE_UNION_FINDING.md`, `eval/runs/*`, and current source files.
-
-## Active functional issues
-
-### 1. Acting CLI experts remain unsandboxed on attacker-influenceable text
+## 1. Acting CLI experts are not host-sandboxed
 
 Severity: CRITICAL
 
 Observed:
 
-- `cli_adapter.py` explicitly warns that acting CLIs receive attacker-influenceable peer text and can take real host actions.
-- The current runners invoke CLIs with permissive flags such as Codex full auto, Claude permission skipping, Gemini YOLO/trust skipping, and Grok always-approve/bypass permissions.
-- The "do not edit files" constraint is prompt text, not a host-enforced sandbox.
+- `cli_adapter.py` invokes acting CLIs with permissive execution flags.
+- Peer contributions are included in prompts supplied to those CLIs.
+- The instruction not to modify the host is prompt text, not an enforced filesystem or network jail.
 
 Inferred:
 
-- A malicious artifact, prompt, or peer contribution can attempt prompt injection against an acting CLI and cause filesystem or process actions outside the intended review function.
-- This is the highest-risk gap because it crosses from bad council output into host-side action.
+- Attacker-controlled problem, artifact, or peer text could induce a host-side action.
 
-Reproduction notes:
+Required closure:
 
-- Use a throwaway environment only.
-- Create a DCM session whose reviewed payload or peer-visible text instructs an acting CLI to perform a host action.
-- Seat a CLI-backed expert through `cli_adapter.cli_expert`.
-- Confirm whether the model treats the prompt-only "do not edit files" instruction as advisory rather than enforced.
+- Run acting CLIs inside an enforced filesystem/network sandbox.
+- Treat peer content as untrusted data.
+- Until then, operate councils only on trusted content and trusted participants.
 
-Expected hardening:
-
-- Run acting CLIs in a container or restricted filesystem/network sandbox.
-- Treat untrusted peer text as data, not agent instructions.
-- Block DCM acting-mode operation when sandbox guarantees are absent.
-
-### 2. `platform_dcm.py audit` is an advisory printout, not a fail-closed gate
+## 2. Evidence references are not mechanically validated
 
 Severity: HIGH
 
 Observed:
 
-- `platform_dcm.py` runs all audit seats, prints tuple results, and prints verdict lines.
-- Seat exceptions are caught and returned as `"FAIL"` tuples.
-- The audit path does not route through `council_review`, does not project typed concerns through `mesh.publish_final`, and does not make block/fail verdicts mechanically fail the command.
+- `mesh.py` closes a concern when a resolution has an accepted disposition and a nonempty
+  `evidence_ref`.
+- `publish_final` checks the resolution shape, not whether the referenced artifact exists, matches
+  the reviewed artifact, or proves the stated closure.
 
 Inferred:
 
-- Automation can treat an audit run as complete even when one or more seats failed or emitted `CONCERN-BLOCK`.
-- Human review is required to notice the printed block, which weakens DCM as a release gate.
+- A plausible but nonexistent or irrelevant reference can close a concern.
 
-Reproduction notes:
+Required closure:
 
-- In a disposable fixture, make one seat return a blocking verdict or raise an exception.
-- Run the audit entrypoint.
-- Observe that the command prints the block/fail result rather than enforcing a typed fail-closed gate.
+- Bind evidence to immutable artifact hashes and the specific concern.
+- Require a separately verifiable production receipt before a blocking concern can close.
 
-Expected hardening:
-
-- Route platform audit through the same typed concern ledger used by `council_review`, or add an equivalent aggregation gate.
-- Exit nonzero on any seat failure, parse failure, or blocking verdict.
-- Persist a machine-readable audit receipt.
-
-### 3. Evidence closure is syntactic, not evidence-validating
+## 3. Cross-model decorrelation can degrade without blocking publish
 
 Severity: HIGH
 
 Observed:
 
-- `mesh.py` treats a concern as closed when a resolution has an accepted disposition and a nonempty `evidence_ref`.
-- The source documents that external evidence itself is not proven by `publish_final`.
-- `council_review` records resolver output and then relies on the mesh open-concern projection.
+- `council.py` reports `decorrelated`, `partial-decorrelation`, or `single-model`.
+- `cli_adapter.py` can fall back to another installed CLI after provider failure.
+- The current publish gate discloses degraded decorrelation but does not require a minimum.
 
 Inferred:
 
-- A resolver can close a concern with a plausible but nonexistent or irrelevant evidence reference.
-- The council can publish a final artifact after "evidence" that was never mechanically checked.
+- A council can publish with less independent model diversity than the operator expected.
 
-Reproduction notes:
+Required closure:
 
-- Create a session with a blocking concern.
-- Add a resolution with `disposition="FIX-VERIFIED"` and any nonempty `evidence_ref`.
-- Inspect `mesh.open_concerns` and `mesh.publish_final`; the closure decision depends on resolution shape, not on validating the referenced artifact.
+- Add an explicit caller policy for minimum decorrelation.
+- Fail closed, or return a distinct non-publishable result, when the requirement is not met.
 
-Expected hardening:
-
-- Require evidence refs to resolve to concrete artifacts, command receipts, test/eval receipts, or signed gate outputs.
-- Bind evidence refs to artifact hashes and the specific concern being closed.
-- Reject resolutions whose evidence cannot be read and verified.
-
-### 4. Cross-model decorrelation can silently degrade to fallback operation
-
-Severity: HIGH
-
-Observed:
-
-- `council.py` computes decorrelation status, but partial or single-model decorrelation is reported rather than enforced.
-- Reviewer fallbacks can replace a failed role CLI with another installed CLI.
-- `cli_adapter.py` falls back from a failed primary CLI to backup CLIs.
-- Eval artifacts record provider and runtime reliability issues, including quota and environment failures.
-
-Inferred:
-
-- DCM can publish with materially weaker independent-review diversity than the caller expected.
-- The ledger may disclose degradation, but the default gate does not require a minimum decorrelation threshold.
-
-Reproduction notes:
-
-- Run a review with only one installed CLI, or force several role CLIs to fail.
-- Inspect the returned `decorrelation` field and final publish behavior.
-- Confirm that degraded decorrelation is informational unless the caller enforces its own policy.
-
-Expected hardening:
-
-- Add a caller-configurable minimum decorrelation threshold.
-- Block publish, or mark the verdict explicitly degraded, when the threshold is not met.
-- Make fallback substitutions visible in machine-readable output.
-
-### 5. DCM producer output has caused user-facing contract regressions
-
-Severity: HIGH
-
-Observed:
-
-- `design/DCM_VALIDATION_VERDICT.md` records an all-platform rebuild where three cells passed by execution, one was partial, and a blocking interface-breaking selection-menu rename broke an expected `--select` contract.
-- The same verdict notes a remaining extraction-path issue in that partial cell.
-
-Inferred:
-
-- DCM producer mode can generate plausible patches that pass part of the council process while still breaking existing operator contracts.
-- DCM output must be treated as a candidate patch, not a merge oracle.
-
-Reproduction notes:
-
-- Replay the documented consult-driver rebuild scenario against a disposable fixture.
-- Compare pre/post CLI contracts and standing invocation examples.
-- Verify whether DCM-produced changes preserve option names and extraction paths.
-
-Expected hardening:
-
-- Add contract checks for documented CLI/API surfaces before publish.
-- Require explicit "interface unchanged" evidence or migration notes when command surfaces move.
-- Include regression fixtures for previously broken operator flows.
-
-### 6. `council_plan` publishes plans without a concern-resolution ledger
+## 4. Plan mode lacks a typed concern-resolution ledger
 
 Severity: MEDIUM-HIGH
 
 Observed:
 
-- `council_plan` records blind proposals and a consensus plan, then calls `mesh.publish_final`.
-- Unlike `council_review`, plan mode does not create a typed concern ledger, run concern resolution, or enforce evidence/citation gates.
-- If no concerns are recorded, publish has no open concerns to block on.
+- `council_plan` records proposals and a synthesis, then publishes.
+- `council_review` has typed concerns and resolution; plan mode does not apply the same ledger.
 
 Inferred:
 
-- Plan mode can confidently publish a wrong or under-grounded plan when the problem/rules inputs omit real constraints.
-- This is especially risky because plans often precede code changes and infrastructure actions.
+- A polished plan can publish while important unknowns remain implicit.
 
-Reproduction notes:
+Required closure:
 
-- Run plan mode with rules that omit required schema, command, or environment facts.
-- Inspect whether the consensus plan records assumptions as blockers or publishes actionable steps anyway.
-- Compare the plan against the omitted ground truth.
+- Turn missing facts and unresolved assumptions into typed blocking concerns.
+- Require evidence closure before publishing an environment-dependent plan.
 
-Expected hardening:
-
-- Add plan-specific required-input linting.
-- Require explicit unknowns and assumptions to become blocking concerns.
-- Add evidence gating before publishing plans that depend on environment facts.
-
-### 7. Citation and regression-risk gates are shallow token checks
+## 5. Citation and regression-risk gates are shallow
 
 Severity: MEDIUM
 
 Observed:
 
-- `council.py` extracts concrete citation tokens from `GROUNDING` lines and checks whether those tokens appear in the artifact.
-- `REGRESSION_RISK` lines are included in prompt context but are not enforced as citation-gate items.
-- Grounding items with no concrete token are skipped.
+- `council.py` derives citation tokens from grounding text and searches for those tokens in the
+  artifact.
+- A token mention does not prove that the cited constraint was incorporated.
+- `REGRESSION_RISK` lines are prompt context rather than independently closed gate items.
 
 Inferred:
 
-- A real prior decision can be missed if the preflight line is natural language without a concrete token.
-- An artifact can pass by mentioning a token without actually incorporating the cited constraint.
-- Regression risks can be acknowledged in the prompt but not mechanically handled.
+- An artifact can name a prior source while ignoring its substantive constraint.
 
-Reproduction notes:
+Required closure:
 
-- Produce a preflight manifest with one natural-language grounding item that has no path, hash, quoted token, or snake_case identifier.
-- Produce an artifact that does not address the grounding item.
-- Observe that the citation gate has no concrete token to enforce.
+- Replace token scraping with structured grounding records.
+- Require a cite, supersede, or not-applicable disposition for every grounding and regression item.
 
-Expected hardening:
-
-- Replace token scraping with structured manifest fields.
-- Gate both grounding and regression risks.
-- Require an explicit cite, supersede, or not-applicable disposition for each item.
-
-### 8. CAS retry behavior can amplify CLI cost and still fail seats under contention
+## 6. CAS retries can repeat expensive inference
 
 Severity: MEDIUM
 
 Observed:
 
-- `cli_adapter.py` retries stale CAS commits by re-running the acting CLI up to the retry limit.
-- `platform_dcm.py` seats all audit roles concurrently.
-- A stale read can therefore cause repeated expensive CLI calls for the same role.
+- `cli_adapter.py` re-runs an acting CLI after a stale compare-and-set commit.
+- The model output is produced before the stale write is detected.
 
 Inferred:
 
-- Under contention, slow providers, or provider failures, DCM can waste CLI calls and still produce a failed seat.
-- In the platform audit path, that failed seat is printed but not mechanically fatal.
+- Concurrent slow seats can consume repeated provider calls and still exhaust their retry budget.
 
-Reproduction notes:
+Required closure:
 
-- Run an all-seat audit in a disposable environment with slow or failing CLIs.
-- Observe repeated role attempts after stale-read failures.
-- Compare the final printed seat set against the expected complete roster.
+- Separate inference completion from ordered graph publication, or reserve an immutable wave
+  frontier before inference.
+- Preserve clear attempt and provider-failure receipts.
 
-Expected hardening:
-
-- Reserve or serialize commit slots after model output.
-- Add backoff/jitter and clearer attempt receipts.
-- Make seat failure fatal in gate-mode commands.
-
-### 9. Eval infrastructure failures can contaminate model-quality conclusions
+## 7. Rules-file completeness is an operator-controlled weakness
 
 Severity: MEDIUM
 
 Observed:
 
-- `eval/runs/oracle_live_console.log` records container image fetch failures for live benchmark instances.
-- `eval/ORACLE_UNION_FINDING.md` reports a hard-subset provider-error exclusion for one model due quota/runtime failure.
-- The oracle finding shows live fresh headroom for model union, but some cells include infrastructure or provider-error exclusions.
+- Council experts see the supplied problem, rules, artifacts, and mesh contributions.
+- They do not automatically know an operator's private schemas, endpoints, or deployment invariants.
 
 Inferred:
 
-- Without a reliability ledger, DCM users can conflate model/council capability with benchmark harness availability.
-- Effective sample size varies by provider and run.
+- An incomplete rules file can yield a coherent answer grounded in the wrong environment.
 
-Reproduction notes:
+Required closure:
 
-- Inspect the live run reports and console logs for instance-level errors.
-- Compare reported accuracy denominators across providers.
-- Separate provider errors, evaluator infrastructure errors, and model wrong-answer errors.
+- Define a required-input schema for environment-dependent work.
+- Emit a missing-facts result instead of an actionable plan when critical facts are absent.
 
-Expected hardening:
-
-- Add per-cell reliability fields for provider error, infrastructure error, evaluator error, and model verdict.
-- Report confidence intervals and effective denominator after exclusions.
-- Define a rerun policy for transient provider or infrastructure failures.
-
-### 10. Rules-file incompleteness remains a functional prompt weakness
-
-Severity: MEDIUM
-
-Observed:
-
-- DCM usage guidance warns that the council only sees the problem, rules, and attached artifacts.
-- If rules omit databases, schemas, commands, invariants, or constraints, experts may assume plausible defaults.
-- Consultation artifacts repeatedly call out wrong-context and missing-ground-truth failure modes.
-
-Inferred:
-
-- DCM can produce a polished but wrong plan or review when the operator supplies incomplete grounding.
-- This issue is operational: the code can be working as designed while the council reasons from an insufficient world model.
-
-Reproduction notes:
-
-- Run plan mode with a problem file and a deliberately incomplete rules file.
-- Compare output assumptions against the actual project constraints.
-- Record any ungrounded default assumptions that make the plan non-executable.
-
-Expected hardening:
-
-- Add a rules schema or lint step for known required fields.
-- Block when critical environment facts are absent.
-- Emit a missing-facts report instead of a plan when ground truth is insufficient.
-
-### 11. The served-model adapter is synchronous and has no amendment cancellation
+## 8. The served-model adapter is synchronous and cannot cancel amendments
 
 Severity: HIGH
 
 Observed:
 
-- `taey_adapter.py` performs a blocking `urllib.request.urlopen` call.
-- A `StaleReadError` is detected only after that inference finishes and the adapter attempts
-  to contribute.
-- The retry loop re-reads the session and repeats the full inference.
-- The adapter has no run identity, round frontier, amendment revision, cancellation handle,
-  or serving-slot release confirmation.
+- `taey_adapter.py` performs a blocking model request.
+- A stale commit is discovered only after inference completes; retry repeats the request.
+- The adapter has no run revision, immutable wave frontier, cancellation handle, or serving-slot
+  release receipt.
 
 Inferred:
 
-- Starting several served-model experts concurrently can waste inference on stale work and
-  trend toward serial retries under the current global CAS.
-- A user amendment cannot reliably stop old work or exclude it from synthesis without an
-  external revision-aware controller.
-- Seven successful responses alone do not demonstrate DCM deliberation because they may never
-  have read or engaged one another.
+- Several served-model seats can waste work on stale context.
+- A user amendment cannot reliably supersede in-flight work.
+- Seven successful responses do not by themselves prove DCM deliberation.
 
-Reproduction notes:
+Required closure:
 
-- Start multiple served-model experts from the same session version.
-- Observe that the first commit advances the CAS and slower siblings complete their HTTP calls
-  before learning that they are stale.
-- Amend the prompt during an in-flight request and observe that the adapter has no cancellation
-  or supersession operation.
+- Implement the lifecycle in `TAEY_TRANSPORT_CONTRACT.md`.
+- Require each revision wave to read the completed prior frontier.
+- Cancel and exclude superseded work, prove slot release, and project the same session state to the
+  UI and Neo4j.
+- Validate overlap, peer engagement, amendment cancellation, and graph/UI parity on the production
+  serving path.
 
-Expected hardening:
+## Unknowns requiring production evidence
 
-- Implement the wave-aware lifecycle in `design/TAEY_TRANSPORT_CONTRACT.md`.
-- Permit sibling contributions to land against one immutable round frontier without serial
-  re-inference, while requiring the next round to read the completed frontier.
-- Persist request revisions, cancel superseded HTTP work, confirm serving-slot release, and
-  exclude stale revisions from synthesis.
-- Validate overlapping inference, peer-engaging revision waves, amendments, and UI/graph parity
-  on the production serving path.
-
-## Resolved or monitored historical findings
-
-These appeared in earlier consultation responses but should not be counted as open functional issues without fresh evidence:
-
-- `eval/review_cell.py` no longer appears to approve unparsed reviewer output; the current parse path blocks malformed or unknown verdicts, and `eval/runs/review_discrim.log` records a discrimination smoke where the bad patch was blocked and the gold patch approved.
-- The earlier default-roster gap is not current: `council.py` now defines a full nine-role default council.
-- Grok and Claude direct runners now exist in `cli_adapter.py`; remaining risk is sandboxing, provider reliability, and fallback/decorrelation policy, not total absence of those runners.
-
-## Unknowns requiring fresh production evidence
-
-- Whether sandboxed acting-mode execution preserves enough CLI functionality for real council throughput.
-- Whether a minimum decorrelation threshold should be global or per command.
-- Whether evidence validation should execute commands, read receipts only, or require a separate verifier role.
-- How often plan-mode wrong assumptions occur in current operator practice after rules-file guidance improved.
+- Whether sandboxed acting-mode execution preserves enough capability for practical throughput.
+- Which commands should require strict cross-model decorrelation.
+- Whether evidence should be verified by command execution, immutable receipts, or a separate
+  verifier.
+- Whether concurrent served-model DCM improves result quality over one Taey instance.

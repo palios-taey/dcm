@@ -29,7 +29,6 @@ fail-closed). The served-model reference adapter additionally reads `TAEY_DCM_UR
 | `mesh_cli.py` | agent ⇄ mesh interface: `start` / `read` / `contribute` / `status` / `publish`. |
 | `cli_adapter.py` | runs a real CLI as a mesh expert (`cli_expert`); prompts via stdin / `--prompt-file` (never argv). |
 | `council.py` | `council_plan` / `council_review`: seat roster, Foundation pre-flight grounding → blind round → reveal/resolution, evidence-gated publish. |
-| `platform_dcm.py` | `produce` (a codex producer, verified on REAL runs) + `audit` (blind diff audit on the FULL 9-reviewer roster). |
 | `scaling.py` | the roster is the FULL 9-role library ALWAYS; no 3/4-seat option (the rejected stub). High blast radius only adds a 2nd producer, never shrinks the panel. |
 | `council_cli.py` | the zero-improvisation invocation: `plan` / `review` (full council; no panel knob). See `SKILL.md`. |
 | `taey_adapter.py` | synchronous served-model reference adapter; stale CAS retries repeat inference. |
@@ -38,8 +37,8 @@ fail-closed). The served-model reference adapter additionally reads `TAEY_DCM_UR
 
 ## Common commands
 ```bash
-python platform_dcm.py audit --diff-file <patch> --topic "<what>"   # full 9-reviewer roster, always
-python platform_dcm.py produce --target-repo <worktree> --prompt-file <prompt>
+python council_cli.py plan --problem-file <problem> --rules-file <rules>
+python council_cli.py review --task "<what>" --artifact-file <artifact> --rules-file <rules>
 python mesh_cli.py start "<topic>" "<payload>"        # -> session_id
 python mesh_cli.py read <session_id>                  # peers + version (read before you write)
 python mesh_cli.py contribute <session_id> <role> <read_version> --content -
@@ -57,8 +56,9 @@ python mesh_cli.py contribute <session_id> <role> <read_version> --content -
 - **Evidence-gated.** A concern is a gate that closes only on evidence. No vote-away on correctness;
   safety-veto is unilateral; deadlock escalates, never manufactures consensus.
 - **Report Observed / Inferred / Unknown.** Never inflate process into outcome.
-- **Public repo.** This is `palios-taey/dcm`, public. Every change is a scrubbed public commit — no
-  operator paths, IPs, internal repo names, or secrets. Run inputs are runtime args, never committed.
+- **Public-safe boundary.** Repository visibility is deployment state, not permission to commit
+  operator paths, IPs, internal repo names, or secrets. Every change must be safe for public
+  release. Run inputs are runtime args, never committed.
 
 ## Verification
 ```bash

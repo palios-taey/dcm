@@ -9,11 +9,11 @@ enforced *in the substrate* rather than by asking nicely.
 > coordination unless using it is mandatory and non-bypassable. DCM enforces read-before-write
 > *structurally* via a real compare-and-set.
 
-**What's proven vs not (three-register honest):** DCM is validated as a **review / verification
-layer** — multi-lens blind review that catches silent defects a single agent ships (Observed, by
-execution). Whether real-time deliberation out-*generates* a single agent is **Unknown — deferred,
-not run** (see [`design/DCM_VALIDATION_VERDICT.md`](./design/DCM_VALIDATION_VERDICT.md)). Known
-limitations are tracked openly in [`design/KNOWN_LIMITATIONS.md`](./design/KNOWN_LIMITATIONS.md) —
+**What's proven vs not (three-register honest):** the Neo4j compare-and-set substrate has been
+validated by live concurrent execution, and real multi-seat council histories exist (Observed).
+Whether DCM improves outcome quality over a single agent is **Unknown** until a preregistered
+production comparison measures it. Known limitations are tracked openly in
+[`design/KNOWN_LIMITATIONS.md`](./design/KNOWN_LIMITATIONS.md) —
 **the acting-CLI experts run FULL-ACCESS with no host sandbox, so run councils on TRUSTED content
 only** (see Security below).
 
@@ -71,7 +71,6 @@ peers were in front of it and that it could not commit while ignoring the versio
 | `council.py` | the council: differentiated reviewers off the producer base → Foundation pre-flight grounding → cite-or-block + destructive-ops floor gates → blind round → reveal/evidence-gated resolution → `publish_final`. `council_plan` (consensus plan) / `council_review` (verdict, `tier=` scales the roster). |
 | `council_cli.py` | the zero-improvisation invocation: `plan` / `review`. **Start here — see [`SKILL.md`](./SKILL.md).** |
 | `scaling.py` | the roster is the FULL 9-role defined library, always — a 10–12-seat council with producer + synthesizer. No 3/4-seat option (the rejected stub); high blast radius only adds a 2nd producer. |
-| `platform_dcm.py` | orchestrate fixing one target: `produce` (a codex producer) + `audit` (a blind diff audit through the mesh). |
 | `taey_adapter.py` | synchronous reference adapter for a served model (OpenAI-compatible endpoint, `TAEY_DCM_URL`). A stale CAS repeats the full inference; it is not the interactive concurrent controller specified in [`design/TAEY_TRANSPORT_CONTRACT.md`](./design/TAEY_TRANSPORT_CONTRACT.md). |
 | `cli_adapter.py` | run CLI agents (codex / claude / gemini / grok) as mesh experts; a seat whose CLI is down / rate-limited / empty **falls back** to another installed CLI (`available_clis`, `fallbacks`). **Security: the CLIs run FULL-ACCESS — there is NO sandbox; run councils on TRUSTED content only** (an acting agent on attacker-influenceable peer text is an accepted, unmitigated risk). |
 
@@ -79,6 +78,9 @@ Graph histories are provenance, not disposable runtime state. If a deployment ch
 instances, follow [`design/GRAPH_HISTORY_MIGRATION.md`](./design/GRAPH_HISTORY_MIGRATION.md):
 copy only the DCM namespace, fail on non-identical ID collisions, verify per-session digests,
 and retain the source for rollback.
+
+Historical consultations, evaluation harnesses, and advisory orchestration experiments remain in
+version-control history as research provenance; they are not part of the supported runtime surface.
 
 ## The one invariant (participant-agnostic)
 Every participant — code agent, served model, CLI — funnels through the **same**

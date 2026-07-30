@@ -9,4 +9,4 @@ import os,sys; sys.path.insert(0,os.path.dirname(os.path.abspath('mesh.py')))
 import mesh; mesh._db()
 PY
 for cli in codex claude gemini grok; do command -v $cli >/dev/null 2>&1 && echo "[ok] CLI seat available: $cli" || echo "[note] CLI seat missing: $cli (seats using it will be unavailable)"; done
-if [ "$ok" = 1 ]; then echo "NEXT: python validate_substrate.py  (proves the CAS serializes), then platform_dcm.py audit/produce — see CLAUDE.md"; else echo "NEXT: resolve the [MISSING]/[BLOCKED] lines above, then re-run ./setup.sh"; fi
+if [ "$ok" = 1 ]; then echo "NEXT: python validate_substrate.py  (proves the CAS serializes), then dcm-council plan/review — see CLAUDE.md"; else echo "NEXT: resolve the [MISSING]/[BLOCKED] lines above, then re-run ./setup.sh"; fi
