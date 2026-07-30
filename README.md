@@ -72,13 +72,25 @@ peers were in front of it and that it could not commit while ignoring the versio
 | `council_cli.py` | the zero-improvisation invocation: `plan` / `review`. **Start here — see [`SKILL.md`](./SKILL.md).** |
 | `scaling.py` | the roster is the FULL 9-role defined library, always — a 10–12-seat council with producer + synthesizer. No 3/4-seat option (the rejected stub); high blast radius only adds a 2nd producer. |
 | `platform_dcm.py` | orchestrate fixing one target: `produce` (a codex producer) + `audit` (a blind diff audit through the mesh). |
-| `taey_adapter.py` | run a served model (OpenAI-compatible endpoint, `TAEY_DCM_URL`) as a mesh expert. |
+| `taey_adapter.py` | synchronous reference adapter for a served model (OpenAI-compatible endpoint, `TAEY_DCM_URL`). A stale CAS repeats the full inference; it is not the interactive concurrent controller specified in [`design/TAEY_TRANSPORT_CONTRACT.md`](./design/TAEY_TRANSPORT_CONTRACT.md). |
 | `cli_adapter.py` | run CLI agents (codex / claude / gemini / grok) as mesh experts; a seat whose CLI is down / rate-limited / empty **falls back** to another installed CLI (`available_clis`, `fallbacks`). **Security: the CLIs run FULL-ACCESS — there is NO sandbox; run councils on TRUSTED content only** (an acting agent on attacker-influenceable peer text is an accepted, unmitigated risk). |
+
+Graph histories are provenance, not disposable runtime state. If a deployment changes Neo4j
+instances, follow [`design/GRAPH_HISTORY_MIGRATION.md`](./design/GRAPH_HISTORY_MIGRATION.md):
+copy only the DCM namespace, fail on non-identical ID collisions, verify per-session digests,
+and retain the source for rollback.
 
 ## The one invariant (participant-agnostic)
 Every participant — code agent, served model, CLI — funnels through the **same**
 `mesh.contribute(read_version)` chokepoint via a thin adapter. That single CAS token enforces
 read-before-write uniformly.
+
+The invariant governs commits, not in-flight compute. In particular, it does not cancel a
+blocking model request when another participant advances the graph. The current synchronous
+served-model adapter re-runs inference after a stale commit. A concurrent Taey-native council
+therefore requires the wave, revision, cancellation, and UI-projection behavior in
+[`design/TAEY_TRANSPORT_CONTRACT.md`](./design/TAEY_TRANSPORT_CONTRACT.md); seven unrelated
+responses are not DCM deliberation.
 
 ## Security — read this before you run a council
 > **CRITICAL, by design and unmitigated:** the council's "experts" are real CLI agents (codex /
@@ -94,6 +106,8 @@ read-before-write uniformly.
 - `DCM_NEO4J_URI` (default `bolt://localhost:7687`) — the mesh graph.
 - `DCM_NEO4J_USER` / `DCM_NEO4J_PASSWORD` — Neo4j auth (optional on loopback).
 - `TAEY_DCM_URL` (default `http://localhost:8765/v1/chat/completions`) — served model for `taey_adapter`.
+- `TAEY_DCM_MODEL` (default `ep3`) — stable served-model alias; promote checkpoints behind the
+  alias rather than coupling council code to a checkpoint path.
 - **Security — fail-closed:** a **non-loopback** `DCM_NEO4J_URI` with **no auth** is *refused*
   at connect time (a no-auth bolt port beyond localhost exposes a full read/write graph: read
   all sessions, forge/delete contributions, flip status/final). Set credentials, or
