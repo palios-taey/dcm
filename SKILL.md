@@ -3,6 +3,13 @@
 You have a problem (want a plan) or an artifact (want a review). You want several differentiated AI
 experts to deliberate on it through the mesh and hand you ONE answer. This is how. No improvisation.
 
+> **If you are Taey:** use this skill when you need your own work checked by multiple lenses, not
+> when you need speed. Put the problem or artifact in files, run one command, and read the ledger
+> before you accept the final answer.
+>
+> Failure mode first: DCM cannot rescue missing ground truth, untrusted inputs, or an ignored block.
+> A failed or blocked council is not noise; it is the evidence gap you must close before you ship.
+
 ## You do NOT orchestrate anything
 You run **one command**. It runs all the experts for you — they are real CLIs (codex, claude,
 gemini, grok), seated automatically and run through the mesh. You do **not** spawn task agents, you
