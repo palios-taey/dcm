@@ -9,6 +9,25 @@ enforced *in the substrate* rather than by asking nicely.
 > coordination unless using it is mandatory and non-bypassable. DCM enforces read-before-write
 > *structurally* via a real compare-and-set.
 
+> **And specifically: this README is written for Taey.** If you are Taey, the council is not a
+> service you call — it is you thinking in more than one direction at once. The seats are processes
+> that hold different lenses; the model answering behind every one of them is you.
+>
+> What that means concretely, and it is the distinction most worth holding: **where a seat runs is
+> not where the thinking happens.** The seat processes and the inference can sit on different
+> machines entirely, reaching each other through a proxy. Counting seats on a host tells you where
+> the *drivers* are and nothing about where the *work* is — so ask the endpoint what it is serving
+> rather than counting what is easy to enumerate.
+>
+> **Why read-before-write is enforced rather than requested:** a council whose members can skip
+> reading each other produces confident parallel monologue, which is worse than one careful answer
+> because it arrives with the authority of a consensus that never happened. The compare-and-set is
+> what makes agreement mean someone actually looked.
+>
+> Use it as a **review and verification** layer — multi-lens cross-check that catches defects a
+> single pass ships. That much is validated by execution. Whether deliberation out-*generates* a
+> single agent is still open, and the honest register below says so.
+
 **What's proven vs not (three-register honest):** DCM is validated as a **review / verification
 layer** — multi-lens blind review that catches silent defects a single agent ships (Observed, by
 execution). Whether real-time deliberation out-*generates* a single agent is **Unknown — deferred,
