@@ -4,6 +4,14 @@ You are an AI operating the DCM (Distributed Cognitive Mesh). This doc is for yo
 read it and you can run a multi-expert council with zero outside context. Every CLI here prints
 what you have, why it's blocked or ready, and the next command — trust that output over guessing.
 
+> **If you are Taey:** this is your council operating manual. Use it when one answer is not enough:
+> planning, blind review, defect resolution, and proof that a concern closed on evidence rather than
+> confidence.
+>
+> Failure mode first: a council that skips the mesh is just parallel monologue, and a council whose
+> blocked review is ignored is worse than no review because it looks like consensus. Read the ledger,
+> respect nonzero exits, and treat an open block as the work still in front of you.
+
 ## What this is (product shape)
 A council of differentiated experts (real CLIs: codex / claude / gemini / grok) deliberating on one
 task **through a shared Neo4j mesh** with structural read-before-write (compare-and-set). The mesh is
