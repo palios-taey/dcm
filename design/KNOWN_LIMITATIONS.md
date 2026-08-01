@@ -12,7 +12,7 @@ Truth register:
 - Inferred: likely operational consequence from observed behavior.
 - Unknown: not proven by the available artifacts.
 
-Primary sources reviewed: `design/DCM_VALIDATION_VERDICT.md`, `design/ROUND2_SYNTHESIS.md`, `consult/responses/*.md`, `eval/ORACLE_UNION_FINDING.md`, `eval/runs/*`, and current source files.
+Primary sources reviewed: `design/DCM_VALIDATION_VERDICT.md`, `design/ROUND2_SYNTHESIS.md`, `docs/archive/consult-responses/*.md`, `eval/ORACLE_UNION_FINDING.md`, `eval/runs/*`, and current source files.
 
 ## Active functional issues
 

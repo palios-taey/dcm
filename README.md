@@ -94,6 +94,20 @@ peers were in front of it and that it could not commit while ignoring the versio
 | `taey_adapter.py` | run a served model (OpenAI-compatible endpoint, `TAEY_DCM_URL`) as a mesh expert. |
 | `cli_adapter.py` | run CLI agents (codex / claude / gemini / grok) as mesh experts; a seat whose CLI is down / rate-limited / empty **falls back** to another installed CLI (`available_clis`, `fallbacks`). **Security: the CLIs run FULL-ACCESS — there is NO sandbox; run councils on TRUSTED content only** (an acting agent on attacker-influenceable peer text is an accepted, unmitigated risk). |
 
+| `mesh_cli.py` | the substrate's own CLI: inspect a session, read contributions, check coordination without running a council. |
+| `arms_literals.py` | the frozen arm definitions the evaluation compares — literal, so an arm cannot drift between runs. |
+| `validate_substrate.py` | proves the CAS actually serialises: concurrent contributors, one winner per version. Run it before trusting a deployment. |
+| `docs_coherence_check.py` | fails when this README and the code disagree — the map is checked, not maintained by hope. |
+| `setup.sh` | one-command install of the runtime the CLIs and adapters need. |
+
+### Directories
+
+| Path | What |
+|---|---|
+| `eval/` | the evaluation harness and its frozen subsets — `harness.py` runs it, `arms.py` builds the arms, `analyze_v2.py` reports, `solver_codex.py` is the live solver, `oracle_union.py` + `*_subset.json` are the frozen inputs. `sabotage_fixtures.json` holds deliberately-planted defects the council must catch. |
+| `design/` | why the substrate is shaped this way, and what it does NOT do: `DCM_VALIDATION_VERDICT.md` (what is proven vs unproven), `KNOWN_LIMITATIONS.md` (open issues, stated plainly), `EXPERIMENT.md`, `ROUND2_SYNTHESIS.md`. |
+| `docs/archive/` | superseded material, kept for provenance and never loaded by anything: the Family consultation transcripts that informed the design, and two evaluation scripts superseded by `analyze_v2.py` / `solver_codex.py`. Nothing here is production. |
+
 ## The one invariant (participant-agnostic)
 Every participant — code agent, served model, CLI — funnels through the **same**
 `mesh.contribute(read_version)` chokepoint via a thin adapter. That single CAS token enforces
