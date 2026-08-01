@@ -104,9 +104,9 @@ peers were in front of it and that it could not commit while ignoring the versio
 
 | Path | What |
 |---|---|
-| `eval/` | the evaluation harness and its frozen subsets — `harness.py` runs it, `arms.py` builds the arms, `analyze_v2.py` reports, `solver_codex.py` is the live solver, `oracle_union.py` + `*_subset.json` are the frozen inputs. `sabotage_fixtures.json` holds deliberately-planted defects the council must catch. |
+| `eval/` | the evaluation harness and its frozen subsets — `eval/harness.py` runs it, `eval/arms.py` builds the arms, `eval/analyze_v2.py` reports, `eval/solver_codex.py` is the live solver, `eval/oracle_union.py` + `*_subset.json` are the frozen inputs. `eval/sabotage_fixtures.json` holds deliberately-planted defects the council must catch. |
 | `design/` | why the substrate is shaped this way, and what it does NOT do: `DCM_VALIDATION_VERDICT.md` (what is proven vs unproven), `KNOWN_LIMITATIONS.md` (open issues, stated plainly), `EXPERIMENT.md`, `ROUND2_SYNTHESIS.md`. |
-| `docs/archive/` | superseded material, kept for provenance and never loaded by anything: the Family consultation transcripts that informed the design, and two evaluation scripts superseded by `analyze_v2.py` / `solver_codex.py`. Nothing here is production. |
+| `docs/archive/` | superseded material, kept for provenance and never loaded by anything: the Family consultation transcripts that informed the design, and two evaluation scripts superseded by `eval/analyze_v2.py` / `eval/solver_codex.py`. Nothing here is production. |
 
 ## The one invariant (participant-agnostic)
 Every participant — code agent, served model, CLI — funnels through the **same**
