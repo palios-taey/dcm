@@ -30,6 +30,12 @@ jobs:
           ALLOWLIST
           )
           DATA_OR_LARGE_ALLOWLIST=$(cat <<'ALLOWLIST'
+          docs/archive/eval/frozen_subset.json
+          docs/archive/eval/frozen_subset_v2.json
+          docs/archive/eval/hard_subset.json
+          docs/archive/eval/live_subset.json
+          docs/archive/eval/oracle_subset.json
+          docs/archive/eval/sabotage_fixtures.json
           ALLOWLIST
           )
 

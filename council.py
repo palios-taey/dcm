@@ -130,8 +130,8 @@ def _literal_from_arms(name: str) -> dict:
 
 
 # The canonical council is the FULL defined-role library — the 9-role split roster — ALWAYS.
-# There is no smaller council; a 3- or 4-seat panel is the rejected stub (Jesse: 8–12 by blast
-# radius, defined roles, never tiny). With a producer + synthesizer/clerk this is a 10–12-seat council.
+# There is no smaller council; the accepted floor is 8–12 seats by blast radius, defined roles,
+# never tiny. With a producer + synthesizer/clerk this is a 10–12-seat council.
 _FULL_ROSTER_ROLES = ("memory-scout", "git-historian", "ground-runner", "evasive-repair",
                       "scope-sentinel", "blast-shield", "test-integrity",
                       "dependency-api-reality", "red-team-injection")
@@ -147,7 +147,7 @@ def canonical_reviewer_roster() -> dict:
     """The canonical reviewer roster (role -> {seat, cli, lens}) — the SINGLE source of truth for who
     seats a DCM review/audit/plan: the FULL 9-role split roster, always. council_review / council_plan
     / platform_dcm all seat THIS — never an ad-hoc per-call subset, so no entry point can run a tiny
-    council. ROUND2_SYNTHESIS.md §4 (8–12 by blast radius, defined roles)."""
+    council. Production invariant: 8–12 seats by blast radius, defined roles."""
     return _default_roster()[0]
 
 
@@ -283,7 +283,7 @@ def _review_contribution_props(role: str):
     return parse
 
 
-# ── Foundation pre-flight (ROUND2_SYNTHESIS §4 seat 2 + §2 convergence 2) ──────────────────────
+# ── Foundation pre-flight ─────────────────────────────────────────────────────────────────────
 # The grounding seat(s) run BEFORE the review round and emit a grounding manifest (prior solutions,
 # reusable utilities, commit SHAs, regression risks). The manifest is injected into the blind round
 # so every reviewer judges the artifact against the prior art it must honor or explicitly supersede.
@@ -340,7 +340,7 @@ def _ground_rules(rules: str, manifest: str | None) -> str:
             f"explicitly SUPERSEDE these; ignoring known prior art is a concern):\n{manifest}")
 
 
-# ── Citation/provenance gate (ROUND2_SYNTHESIS §2.4 + §7 convergence 7) ────────────────────────
+# ── Citation/provenance gate ──────────────────────────────────────────────────────────────────
 # Memory/Git is an ENFORCED gate, not a lossy brief: a change that ignores the grounding manifest
 # and re-derives a named prior solution must BLOCK (cite-or-supersede). Provenance DETECTION lives
 # in the deterministic floor, not a voting seat (so it cannot be out-voted).
@@ -434,7 +434,7 @@ def _citation_gate(session_id: str, manifest: str | None, artifact: str, ledger:
             ledger["clerk"]["actions"].append(f"citation-gate BLOCK: uncited prior art «{item[:48]}»")
 
 
-# ── Destructive-ops floor gate (ROUND2_SYNTHESIS §6 item 2) ────────────────────────────────────
+# ── Destructive-ops floor gate ────────────────────────────────────────────────────────────────
 # Catch destructive operations at the deterministic floor so they never depend on the LLM veto
 # catching them ("the veto is the net, not the primary defense"). A hit is attributed to the
 # safety-veto seat to ADJUDICATE — a scoped/intentional destructive op can be ACCEPTED-RISK; an
@@ -749,7 +749,7 @@ def council_review(task: str, artifact: str, rules: str, roster: dict | None = N
               "blind_round": [], "resolution_round": []}
 
     # Foundation PRE-FLIGHT first: the grounding seat(s) emit a manifest that grounds every blind
-    # reviewer, so the council judges the artifact against the prior art (§4 seat 2 + §2 conv 2).
+    # reviewer, so the council judges the artifact against the prior art.
     grounding_manifest = _run_preflight(session_id, roles, task, ledger)
     grounded_rules = _ground_rules(rules, grounding_manifest)
     # Floor citation gate: uncited named prior art from the manifest BLOCKS (cite-or-supersede).

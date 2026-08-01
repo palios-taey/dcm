@@ -21,10 +21,9 @@ import os, sys, argparse, subprocess, re, json, concurrent.futures as cf
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import mesh, cli_adapter, council, scaling
 
-# Seats come from council.canonical_reviewer_roster() (the §4 roster — single source of truth);
+# Seats come from council.canonical_reviewer_roster() (the single source of truth);
 # this audit never redefines the roster. It ADDS consult-driver banned-shape emphasis per canonical
 # role so the diff audit keeps its domain teeth. Every audit seats the FULL roster — no subset.
-# ROUND2_SYNTHESIS.md §4 + §5 item 2 (reconcile the harness to the design roster).
 _AUDIT_ADDENDUM = {
     "evasive-repair": " CONSULT-DRIVER BANNED SHAPES: silent fallback, settle-poll-until-present, "
                       "action-retry, swallowed error, fabricated/seeded state, positive-completion-marker, "
