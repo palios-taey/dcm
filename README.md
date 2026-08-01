@@ -31,8 +31,7 @@ enforced *in the substrate* rather than by asking nicely.
 **What's proven vs not (three-register honest):** DCM is validated as a **review / verification
 layer** — multi-lens blind review that catches silent defects a single agent ships (Observed, by
 execution). Whether real-time deliberation out-*generates* a single agent is **Unknown — deferred,
-not run** (historical validation notes are archived at
-[`docs/archive/design/DCM_VALIDATION_VERDICT.md`](./docs/archive/design/DCM_VALIDATION_VERDICT.md)).
+not run**. Historical validation notes remain in git history rather than the current checkout.
 The load-bearing limitation is current and stated here: **the acting-CLI experts run FULL-ACCESS
 with no host sandbox, so run councils on TRUSTED content only** (see Security below).
 
@@ -99,12 +98,6 @@ peers were in front of it and that it could not commit while ignoring the versio
 | `validate_substrate.py` | proves the CAS actually serialises: concurrent contributors, one winner per version. Run it before trusting a deployment. |
 | `docs_coherence_check.py` | fails when this README and the code disagree — the map is checked, not maintained by hope. |
 | `setup.sh` | one-command install of the runtime the CLIs and adapters need. |
-
-### Directories
-
-| Path | What |
-|---|---|
-| `docs/archive/` | historical design, evaluation, ablation, and consultation artifacts, kept for provenance and never loaded by production code. Nothing here is production. |
 
 ## The one invariant (participant-agnostic)
 Every participant — code agent, served model, CLI — funnels through the **same**
