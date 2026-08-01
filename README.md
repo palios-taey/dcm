@@ -31,10 +31,10 @@ enforced *in the substrate* rather than by asking nicely.
 **What's proven vs not (three-register honest):** DCM is validated as a **review / verification
 layer** — multi-lens blind review that catches silent defects a single agent ships (Observed, by
 execution). Whether real-time deliberation out-*generates* a single agent is **Unknown — deferred,
-not run** (see [`design/DCM_VALIDATION_VERDICT.md`](./design/DCM_VALIDATION_VERDICT.md)). Known
-limitations are tracked openly in [`design/KNOWN_LIMITATIONS.md`](./design/KNOWN_LIMITATIONS.md) —
-**the acting-CLI experts run FULL-ACCESS with no host sandbox, so run councils on TRUSTED content
-only** (see Security below).
+not run** (historical validation notes are archived at
+[`docs/archive/design/DCM_VALIDATION_VERDICT.md`](./docs/archive/design/DCM_VALIDATION_VERDICT.md)).
+The load-bearing limitation is current and stated here: **the acting-CLI experts run FULL-ACCESS
+with no host sandbox, so run councils on TRUSTED content only** (see Security below).
 
 ## Install + run a council (start here)
 ```bash
@@ -95,7 +95,7 @@ peers were in front of it and that it could not commit while ignoring the versio
 | `cli_adapter.py` | run CLI agents (codex / claude / gemini / grok) as mesh experts; a seat whose CLI is down / rate-limited / empty **falls back** to another installed CLI (`available_clis`, `fallbacks`). **Security: the CLIs run FULL-ACCESS — there is NO sandbox; run councils on TRUSTED content only** (an acting agent on attacker-influenceable peer text is an accepted, unmitigated risk). |
 
 | `mesh_cli.py` | the substrate's own CLI: inspect a session, read contributions, check coordination without running a council. |
-| `arms_literals.py` | the frozen arm definitions the evaluation compares — literal, so an arm cannot drift between runs. |
+| `arms_literals.py` | the frozen role literals shared by the council and historical evaluation — literal, so a role cannot drift between runs. |
 | `validate_substrate.py` | proves the CAS actually serialises: concurrent contributors, one winner per version. Run it before trusting a deployment. |
 | `docs_coherence_check.py` | fails when this README and the code disagree — the map is checked, not maintained by hope. |
 | `setup.sh` | one-command install of the runtime the CLIs and adapters need. |
@@ -104,9 +104,7 @@ peers were in front of it and that it could not commit while ignoring the versio
 
 | Path | What |
 |---|---|
-| `eval/` | the evaluation harness and its frozen subsets — `eval/harness.py` runs it, `eval/arms.py` builds the arms, `eval/analyze_v2.py` reports, `eval/solver_codex.py` is the live solver, `eval/oracle_union.py` + `*_subset.json` are the frozen inputs. `eval/sabotage_fixtures.json` holds deliberately-planted defects the council must catch. |
-| `design/` | why the substrate is shaped this way, and what it does NOT do: `DCM_VALIDATION_VERDICT.md` (what is proven vs unproven), `KNOWN_LIMITATIONS.md` (open issues, stated plainly), `EXPERIMENT.md`, `ROUND2_SYNTHESIS.md`. |
-| `docs/archive/` | superseded material, kept for provenance and never loaded by anything: the Family consultation transcripts that informed the design, and two evaluation scripts superseded by `eval/analyze_v2.py` / `eval/solver_codex.py`. Nothing here is production. |
+| `docs/archive/` | historical design, evaluation, ablation, and consultation artifacts, kept for provenance and never loaded by production code. Nothing here is production. |
 
 ## The one invariant (participant-agnostic)
 Every participant — code agent, served model, CLI — funnels through the **same**
@@ -119,9 +117,8 @@ read-before-write uniformly.
 > and **no host sandbox**. Peer contributions on the mesh are attacker-influenceable text fed into
 > those acting agents, and the "do not edit files" instruction is prompt text, *not* an enforced
 > jail. **Run councils only on TRUSTED content and trusted participants**, ideally in a throwaway /
-> fs-and-network-dropped environment. This is an accepted, documented risk, not a solved one — see
-> [`design/KNOWN_LIMITATIONS.md`](./design/KNOWN_LIMITATIONS.md) issue #1. Sandboxing acting CLIs is
-> tracked, not shipped.
+> fs-and-network-dropped environment. This is an accepted, documented risk, not a solved one.
+> Sandboxing acting CLIs is tracked, not shipped.
 
 ## Adoption / config (env)
 - `DCM_NEO4J_URI` (default `bolt://localhost:7687`) — the mesh graph.

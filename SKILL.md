@@ -76,7 +76,7 @@ and any hard architecture constraints (e.g. a required review gate). Garbage-in 
 ## Three things to know before you rely on a run
 - **Trusted content only.** The CLIs run full-access — there is no sandbox. Do not feed a council
   untrusted/attacker-influenceable content.
-- **It fires real CLIs.** A `plan` over the 4-expert panel takes a few minutes. That is the real
+- **It fires real CLIs.** A council run takes a few minutes. That is the real
   deliberation, not a stub.
 - **Production is the oracle.** "It ran + published" = Observed. "DCM beats one agent" = Unknown
-  until the §7 ablation measures it.
+  until a real production observation proves it.
