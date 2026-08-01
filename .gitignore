@@ -12,3 +12,11 @@ problem*.txt
 rules*.txt
 council_out*.txt
 *.council.out
+
+# Retired path components are history-only, not current public surface.
+archive/
+archived/
+deprecated/
+superseded/
+obsolete/
+legacy/
