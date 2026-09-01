@@ -94,13 +94,18 @@ Add a separate wave path with these semantics:
 - bind every contribution to a deterministic request ID so Redis redelivery returns the same result;
 - reject writes to closed sessions, closed waves, superseded revisions, unknown roles, duplicate role
   slots with different requests, and parent frontiers that do not match the opened wave;
+- audit each sibling against the exact immutable parent frontier it was given and audit later waves
+  against their required prior-wave parents, without treating unseen same-wave siblings as silos;
 - represent each required seat as contributed, failed, missing, cancelled, or superseded before the
   next wave can open;
 - let later waves read the completed prior-wave frontier without claiming that already-running model
   requests can receive mid-inference updates.
 
-Suggested public operations are `open_wave()`, `read_wave()`, `contribute_wave()`, and
-`close_wave()`. Exact names are subordinate to the invariants above.
+Suggested public operations are `open_wave()`, `read_wave()`, `contribute_wave()`,
+`verify_wave_coordination()`, and `close_wave()`. Exact names are subordinate to the invariants
+above. The existing linear `verify_coordination()` remains the sequential CLI-council audit; it
+must not judge concurrent siblings by sequence order because those siblings correctly did not see
+one another.
 
 ## Smallest Presence insertion point
 
