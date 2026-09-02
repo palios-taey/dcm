@@ -24,13 +24,14 @@ python3 -m venv .venv && . .venv/bin/activate   # venv required on PEP-668 syste
 pip install .         # deps (neo4j) + the dcm-council / dcm-mesh entry points
 ./setup.sh            # checks python deps (neo4j) + a reachable DCM_NEO4J_URI, prints the next step
 ```
-Env (the only config): `DCM_NEO4J_URI` (default `bolt://localhost:7687`), `DCM_NEO4J_USER` /
-`DCM_NEO4J_PASSWORD` (optional on loopback; a non-loopback URI with no auth is REFUSED, fail-closed).
+Env (the only config): `DCM_NEO4J_URI` (default `bolt://localhost:7687`),
+`DCM_NEO4J_DATABASE` (default `neo4j`), and `DCM_NEO4J_USER` / `DCM_NEO4J_PASSWORD`
+(optional on loopback; a non-loopback URI with no auth is REFUSED, fail-closed).
 
 ## Code map
 | File | What it is |
 |---|---|
-| `mesh.py` | the substrate: `start_session` / `read_session` / `contribute(read_version)` (real CAS — commit only if no peer arrived since your read; else `StaleReadError` → re-read+redo) / `publish_final` (fails closed on open block-concerns) / `verify_coordination`. Own `:DCMSession`/`:DCMContribution` namespace. |
+| `mesh.py` | the substrate: linear `start_session` / `read_session` / `contribute(read_version)` CAS plus additive concurrent `open_wave` / `reserve_wave_request` / `claim_wave_request` / `contribute_wave` / `close_wave` operations. `publish_final` fails closed on open block-concerns and incomplete wave coordination. Own `:DCMSession`/`:DCMWave`/`:DCMWaveSlot`/`:DCMContribution` namespace. |
 | `mesh_cli.py` | the agent ⇄ mesh interface: `start` / `read` / `contribute` / `status` / `publish`. How a CLI expert (or you) joins a session. |
 | `cli_adapter.py` | runs a real CLI as a mesh expert (`cli_expert`): reads the session, prompts the CLI, commits its output via CAS. Prompts go via stdin / `--prompt-file` (never argv — coordinated prompts exceed MAX_ARG_STRLEN). gemini needs `--skip-trust`. **Degrades, doesn't crash:** a seat whose CLI is down/rate-limited/empty falls back to another installed CLI (`fallbacks`); `available_clis()` detects what's installed; only-claude → single-model (labeled in `ledger.decorrelation`). |
 | `council.py` | `council_plan` / `council_review`: seat the roster (validated bases; reviewers ≠ producer base), **Foundation pre-flight grounding** → **cite-or-block citation gate** (uncited named prior art BLOCKS) → blind round (grounded by the manifest) → reveal/resolution, evidence-gated `publish_final`. `tier=` scales the roster. |
@@ -65,6 +66,8 @@ python mesh_cli.py contribute <session_id> <role> <read_version> --content -   #
 ## Verification
 ```bash
 python validate_substrate.py     # proves the CAS serializes (N-thread race → 1 win / N-1 stale)
+python validate_schema_init.py   # requires a clean Neo4j; proves simultaneous OS-process initialization
+python validate_wave_api.py      # proves seven-seat wave, replay, supersession, and final invariants
 ```
 A real council "passes" when its blind, independent review caught a real defect the producer shipped and
 the fix re-verified on a real run — measured, not asserted.

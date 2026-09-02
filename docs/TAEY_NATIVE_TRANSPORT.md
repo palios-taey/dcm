@@ -1,6 +1,7 @@
 # Taey-native DCM transport
 
-Status: exact integration map; the wave API and Presence adapter described below are not yet implemented.
+Status: exact integration map; the public wave API is implemented, while the Presence adapter
+described below is not yet implemented or production-qualified.
 
 This contract carries forward the technically valid Taey-native transport direction recorded in
 draft PR #4, commits `72be073` and `771b342`. That draft was deferred when its owning production
@@ -49,9 +50,9 @@ preserving concurrent inference.
 - Main Taey is the executive and sole user-facing synthesizer.
 - The existing seven stable role prompts remain application assets in `taey-presence`.
 
-Production must set `DCM_NEO4J_URI` explicitly. The measured deployment uses the loopback DCM graph
-at `bolt://127.0.0.1:7687`, database `neo4j`. The orchestrator graph at loopback port `7689` remains a
-separate state owner. No component may select between them implicitly.
+Production must set `DCM_NEO4J_URI` and `DCM_NEO4J_DATABASE` explicitly. The measured deployment uses
+the loopback DCM graph at `bolt://127.0.0.1:7687`, database `neo4j`. The orchestrator graph at loopback
+port `7689` remains a separate state owner. No component may select between them implicitly.
 
 ## Current committed call flow
 
@@ -89,8 +90,9 @@ Preserve `start_session()`, `read_session()`, `contribute()`, and the external C
 Add a separate wave path with these semantics:
 
 - open a wave under one open DCM session;
-- bind immutable session, round, phase, request revision, required roles, and parent contribution IDs;
-- allow one contribution per `(session, round, role, request_revision)`;
+- bind immutable session, round, phase, prompt material, request revision, exact seat/role membership,
+  and relationship-derived parent contribution IDs;
+- allow one contribution per `(session, wave, role, request_revision)`;
 - bind every contribution to a deterministic request ID so Redis redelivery returns the same result;
 - reject writes to closed sessions, closed waves, superseded revisions, unknown roles, duplicate role
   slots with different requests, and parent frontiers that do not match the opened wave;
@@ -101,11 +103,15 @@ Add a separate wave path with these semantics:
 - let later waves read the completed prior-wave frontier without claiming that already-running model
   requests can receive mid-inference updates.
 
-Suggested public operations are `open_wave()`, `read_wave()`, `contribute_wave()`,
-`verify_wave_coordination()`, and `close_wave()`. Exact names are subordinate to the invariants
-above. The existing linear `verify_coordination()` remains the sequential CLI-council audit; it
-must not judge concurrent siblings by sequence order because those siblings correctly did not see
-one another.
+The public operations are `open_wave()`, `read_wave()`, `reserve_wave_request()`,
+`claim_wave_request()`, `contribute_wave()`, `record_wave_outcome()`,
+`verify_wave_coordination()`, `close_wave()`, `open_concerns()`, and `publish_final()`. Main reserves each graph-bound request before
+placing it in Redis. The role-bound worker proves its exact live seat, process generation, endpoint,
+alias, model, and container identity before the graph claim authorizes inference. Commit-time
+deduplication alone would let two duplicate deliveries both invoke the model before one lost the
+contribution-slot race. The existing linear `verify_coordination()` remains the sequential
+CLI-council audit; it must not judge concurrent siblings by sequence order because those siblings
+correctly did not see one another.
 
 ## Smallest Presence insertion point
 
@@ -123,8 +129,9 @@ NativeCouncilTransport.start_round
 Only these seams need to change initially:
 
 1. `start_round()` opens one graph session and first wave.
-2. `_enqueue()` carries `dcm_session_id`, round, phase, request revision, stable role, deterministic
-   request ID, and immutable parent frontier.
+2. `_enqueue()` first reserves the exact seat/role request in Neo4j, then carries `dcm_session_id`,
+   round, phase, prompt and request revisions, stable role, deterministic request ID, and immutable
+   parent frontier to Redis.
 3. `_response_lineage()` preserves those fields as model-request lineage.
 4. `_run_turn()` reads the exact frontier, performs one inference, commits through the wave API,
    and acknowledges delivery only after the graph commit succeeds.
@@ -140,7 +147,8 @@ a second role-output schema.
 |---|---|
 | native `round_id` / correlation ID | `DCMSession.session_id` |
 | `round_phase` | immutable wave phase |
-| `prompt_revision` | request revision |
+| native prompt revision | graph prompt revision |
+| graph request revision | idempotent dispatch revision |
 | `taey-council-N` | transport seat ID |
 | stable role ID | graph role slot |
 | deterministic `request_id` | graph idempotency key |
@@ -229,10 +237,12 @@ model endpoint, requested alias
 model manifest/content digests, serving-container digest
 ```
 
-Redis stream/list IDs and timestamps are excluded. A changed prompt, frontier, role, process
-generation, endpoint, model identity, or container identity requires a new request revision and
-therefore a new request ID. Missing execution identity is `model_identity_unproven`; alias or
-endpoint substitution is forbidden.
+Redis stream/list IDs and timestamps are excluded. `request_revision` is an immutable wave-local
+dispatch ordinal and may begin at 1 again when Main opens a new wave; `wave_id` keeps those requests
+distinct. A changed prompt, frontier, role, process generation, endpoint, model identity, or
+container identity cannot mutate or retry an existing request: Main opens a new wave and derives a
+new request ID. Missing execution identity is `model_identity_unproven`; alias or endpoint
+substitution is forbidden.
 
 ### Contribution receipt
 
@@ -320,8 +330,8 @@ If graph commit succeeds but acknowledgement delivery fails, Neo4j remains autho
 reads the contribution by deterministic request ID and re-emits the same acknowledgement. It keeps
 the original contribution receipt and inference-process generation unchanged while the transport
 receipt's `emitter.process_generation` identifies the recovery process. It never performs inference
-again. A duplicate delivery records `duplicate_dispatch`, points at the original request, and
-returns the original terminal receipt.
+again. The graph outcome remains `contributed`; the transport acknowledgement records
+`duplicate_dispatch`, points at the original request, and returns the original terminal receipt.
 
 ### Closed outcomes and wave advancement
 
@@ -354,17 +364,26 @@ validation_failed
 graph_commit_failed
 cancelled
 superseded
+generation_mismatch
+model_identity_unproven
 ```
 
 Every refusal or failure records `inference_performed` truthfully. No failure authorizes alias
 substitution, endpoint selection, process takeover, frontier reduction, blind retry, or a second
 inference under the same request ID.
 
-A wave advances only when every required role slot is `contributed`. Each missing, failed,
-cancelled, or superseded slot remains explicit; any such slot makes the wave `incomplete_round`.
-Required membership cannot shrink after opening. A terminal historical request produces
-`terminal_identity_skipped`, performs no inference, and remains tied to its original terminal
-session and preservation digest.
+Only the graph `pending -> claimed` transition authorizes inference. A pending slot may record only
+`inference_performed: false`; any post-inference outcome requires both a prior graph claim and
+`inference_performed: true`. Lost acknowledgement recovery preserves the original claim and outcome
+rather than inventing a new authorization.
+
+A normal wave advances only when every required role slot is `contributed`. Each missing or failed
+slot remains explicit and makes the wave `incomplete_round`. A new user prompt revision may instead
+close the prior wave as `superseded_revision`; every unfinished slot then receives an explicit
+`superseded` outcome and the next independent wave starts at the higher prompt revision without
+inheriting stale parents. Required membership cannot shrink or remap between waves. A terminal
+historical request produces `terminal_identity_skipped`, performs no inference, and remains tied to
+its original terminal session and preservation digest.
 
 ### Concern clearance and final publication
 
@@ -391,6 +410,11 @@ clearance projection from the complete contribution frontier:
 }
 ```
 
+The session stores the canonical projection JSON and `clearance_projection_sha256` in the same
+transaction as the final. The projection's `clearance_frontier_sha256` binds the complete latest
+prompt-revision contribution frontier; the projection digest binds the open and closed concern
+records shown above.
+
 Warnings remain visible and are not relabelled as resolved. `publish_final()` must atomically bind
 the synthesis digest, complete contribution frontier, and clearance digest while transitioning one
 open session to closed. A closed session, closed wave, or superseded revision cannot accept another
@@ -410,6 +434,10 @@ Before a new contribution path runs:
 - historical terminal requests must drain through explicit terminal-skip receipts, never silent
   deletion or model inference; and
 - the public code commit, service source, DCM URI, model alias, and proxy route must be recorded.
+
+The public wave contract already prevents a linear contribution from entering a wave session,
+prevents a wave from entering a linear session, and rejects every post-final mutation. Those are
+contract validations, not evidence that the Presence adapter or a Taey inference round is live.
 
 ## First production proof
 
