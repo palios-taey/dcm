@@ -256,6 +256,10 @@ def _transport_receipt(
         "inference_performed": (
             True
             if terminal["outcome"] == "contributed"
+            else False
+            if terminal["outcome"] == "session_failed" and slot["state"] == "pending"
+            else None
+            if terminal["outcome"] == "session_failed" and slot["state"] == "claimed"
             else terminal["inference_performed"]
         ),
         "contrib_id": terminal.get("contrib_id"),
@@ -282,6 +286,7 @@ def _transport_receipt(
     }
     if terminal.get("outcome") == "session_failed":
         receipt["session_failure_sha256"] = terminal["session_failure_sha256"]
+        receipt["inference_state"] = terminal["inference_state"]
     if request_identity.get("request_contract") == "taey-native-dcm-request/v2":
         receipt.update(
             {
@@ -359,6 +364,7 @@ def recover_wave_request(
         wave.get("session_status") == "failed"
         and wave.get("status") == "closed"
         and wave.get("close_outcome") == "session_failed"
+        and slot["state"] in {"pending", "claimed"}
         and wave.get("session_failure") is not None
         and (wave.get("session_failure") or {}).get("terminal_failure_sha256")
         == wave.get("session_failure_sha256")
@@ -372,8 +378,13 @@ def recover_wave_request(
             "state": slot["state"],
             "outcome": "session_failed",
             "duplicate": True,
-            "inference_performed": bool(
-                slot.get("inference_performed", inference_performed)
+            "inference_performed": (
+                False if slot["state"] == "pending" else None
+            ),
+            "inference_state": (
+                "not_started"
+                if slot["state"] == "pending"
+                else "side_effect_uncertain"
             ),
             "session_failure": session_failure,
             "session_failure_sha256": session_failure["terminal_failure_sha256"],
