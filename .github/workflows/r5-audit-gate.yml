@@ -95,4 +95,5 @@ jobs:
             set_status success "R5 ENDORSED: grok + gatekeeper"
           else
             set_status failure "R5 required: grok=$grok_state gatekeeper=$gk_state (both must be success)"
+            exit 1
           fi
