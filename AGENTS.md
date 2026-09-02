@@ -24,7 +24,7 @@ Config is one env group: `DCM_NEO4J_URI` (default `bolt://localhost:7687`),
 ## Code map
 | File | What it is |
 |---|---|
-| `mesh.py` | substrate: linear CAS plus additive concurrent waves with graph-reserved requests, verified inference claims, immutable parent frontiers, exact receipts, explicit terminal outcomes, and one terminal final. |
+| `mesh.py` | substrate: linear CAS plus additive concurrent waves with graph-reserved requests, verified inference claims, immutable parent frontiers, exact receipts, and separate immutable success/failure terminal transitions. |
 | `mesh_cli.py` | agent ⇄ mesh interface: `start` / `read` / `contribute` / `status` / `publish`. |
 | `cli_adapter.py` | runs a real CLI as a mesh expert (`cli_expert`); prompts via stdin / `--prompt-file` (never argv). |
 | `council.py` | `council_plan` / `council_review`: seat roster, Foundation pre-flight grounding → blind round → reveal/resolution, evidence-gated publish. |
@@ -56,6 +56,6 @@ python mesh_cli.py contribute <session_id> <role> <read_version> --content -
 ```bash
 python validate_substrate.py        # proves the CAS serializes (N-thread race → 1 win / N-1 stale)
 python validate_schema_init.py      # requires a clean Neo4j; proves simultaneous OS-process initialization
-python validate_wave_api.py         # proves seven-seat wave, replay, supersession, and final invariants
+python validate_wave_api.py         # proves seven-seat wave, replay, supersession, and terminal invariants
 python docs_coherence_check.py       # fails if CLAUDE.md drifts from the code
 ```

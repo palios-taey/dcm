@@ -86,6 +86,9 @@ the void and silently work alone**, then report success. DCM's mechanisms, state
   accounts for a superseded prompt revision; `verify_wave_coordination()` audits every sibling
   against the exact graph-derived parent set. `publish_final()` accepts exactly one complete
   critique frontier and then makes both linear and wave writes structurally impossible.
+  `fail_session()` is the separate unsuccessful terminal transition: it atomically closes the
+  active wave as `session_failed`, preserves every slot's last honest state, stores only a typed
+  failure identity plus detail digest, and rejects conflicting replays or any later write.
   Explicit taey-native-dcm-request/v2 waves bind one shared ordered request/evidence digest plus
   each role slot's exact system-message/renderer/response-contract digest and external
   model-identity-receipt digest without changing implicit v1 waves. DCM binds those per-seat opaque
@@ -104,7 +107,7 @@ peers were in front of it and that it could not commit while ignoring the versio
 ## Files
 | File | What |
 |---|---|
-| `mesh.py` | the substrate: unchanged linear CAS plus the additive `open_wave` / `read_wave` / `reserve_wave_request` / `claim_wave_request` / `contribute_wave` / `record_wave_outcome` / `close_wave` / `verify_wave_coordination` path. Neo4j-backed (own `:DCMSession`/`:DCMWave`/`:DCMWaveSlot`/`:DCMContribution` namespace; set `DCM_NEO4J_URI`). |
+| `mesh.py` | the substrate: unchanged linear CAS plus the additive `open_wave` / `read_wave` / `reserve_wave_request` / `claim_wave_request` / `contribute_wave` / `record_wave_outcome` / `close_wave` / `verify_wave_coordination` path and the immutable `publish_final` / `fail_session` terminal pair. Neo4j-backed (own `:DCMSession`/`:DCMWave`/`:DCMWaveSlot`/`:DCMContribution` namespace; set `DCM_NEO4J_URI`). |
 | `council.py` | the council: differentiated reviewers off the producer base → Foundation pre-flight grounding → cite-or-block + destructive-ops floor gates → blind round → reveal/evidence-gated resolution → `publish_final`. `council_plan` (consensus plan) / `council_review` (verdict, `tier=` scales the roster). |
 | `council_cli.py` | the zero-improvisation invocation: `plan` / `review`. **Start here — see [`SKILL.md`](./SKILL.md).** |
 | `scaling.py` | the roster is the FULL 9-role defined library, always — a 10–12-seat council with producer + synthesizer. No 3/4-seat option (the rejected stub); high blast radius only adds a 2nd producer. |
@@ -116,7 +119,7 @@ peers were in front of it and that it could not commit while ignoring the versio
 | `arms_literals.py` | the frozen role literals shared by the council and historical evaluation — literal, so a role cannot drift between runs. |
 | `validate_substrate.py` | proves the CAS actually serialises: concurrent contributors, one winner per version. Run it before trusting a deployment. |
 | `validate_schema_init.py` | proves ten simultaneous OS processes return with all ten DCM constraints from a clean Neo4j database. |
-| `validate_wave_api.py` | validates graph-backed pre-inference idempotency, lost-ack recovery, seven sibling commits, exact seat/role continuity, immutable parent advancement, explicit incomplete and superseded rounds, linear/wave isolation, and terminal final immutability. |
+| `validate_wave_api.py` | validates graph-backed pre-inference idempotency, lost-ack recovery, seven sibling commits, exact seat/role continuity, immutable parent advancement, explicit incomplete and superseded rounds, linear/wave isolation, and successful/failed terminal immutability. |
 | `docs_coherence_check.py` | fails when this README and the code disagree — the map is checked, not maintained by hope. |
 | `setup.sh` | one-command install of the runtime the CLIs and adapters need. |
 
