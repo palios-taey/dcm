@@ -244,6 +244,44 @@ container identity cannot mutate or retry an existing request: Main opens a new 
 new request ID. Missing execution identity is `model_identity_unproven`; alias or endpoint
 substitution is forbidden.
 
+#### Additive v2 request contract
+
+The legacy wave contract remains implicit v1. It accepts exactly `{seat_id, role}` members, the v1
+request-identity fields above, and the original claim-observation and contribution-receipt shapes.
+No v1 caller sends a `request_contract` field, and v1 request IDs and receipts are unchanged.
+
+V2 is selected only when `open_wave()` receives
+`request_contract="taey-native-dcm-request/v2"`. Any other explicit value is rejected. Every v2
+member contains exactly these fields:
+
+```text
+seat_id, role, prompt_contract_sha256, model_identity_receipt_sha256
+```
+
+The member object is included in the immutable membership digest and copied to its graph role slot.
+`prompt_contract_sha256` names the complete Presence seat prompt contract for that role;
+`model_identity_receipt_sha256` names the external model-identity receipt selected for that seat.
+Both use the canonical `sha256:<64 lowercase hex>` encoding. DCM binds these opaque digests; it does
+not generate either source object or claim that digest equality verifies the object's contents.
+
+A v2 request identity contains exactly the v1 request-identity fields plus:
+
+```text
+request_contract, prompt_contract_sha256, model_identity_receipt_sha256
+```
+
+The two digests must equal the graph slot, and all three added fields participate in `request_id`.
+The v2 claim observation contains exactly the v1 claim-observation fields plus the two digests and
+must match the frozen request before inference is authorized. A successful v2 contribution returns
+`contract="taey-native-dcm-receipt/v2"` and adds these exact top-level receipt fields:
+
+```text
+request_contract, prompt_contract_sha256, model_identity_receipt_sha256
+```
+
+Receipt reconstruction validates them against membership, request identity, and the stored claim.
+Membership, contract version, or either digest cannot change between waves in one session.
+
 ### Contribution receipt
 
 After a successful graph commit, the envelope carries:

@@ -15,6 +15,21 @@ MEMBERS = [
     for index, role in enumerate(ROLES, start=1)
 ]
 PROMPT_MESSAGES = [{"role": "user", "content": "wave validation"}]
+V2_REQUEST_CONTRACT = "taey-native-dcm-request/v2"
+V2_PROMPT_CONTRACT_SHA256 = mesh._canonical_sha256(
+    {"shared": "presence shared contract", "role": "v2-role contract"}
+)
+V2_MODEL_IDENTITY_RECEIPT_SHA256 = mesh._canonical_sha256(
+    {"model_identity_receipt": "validation"}
+)
+V2_MEMBERS = [
+    {
+        "seat_id": "taey-council-v2",
+        "role": "v2-role",
+        "prompt_contract_sha256": V2_PROMPT_CONTRACT_SHA256,
+        "model_identity_receipt_sha256": V2_MODEL_IDENTITY_RECEIPT_SHA256,
+    }
+]
 
 
 def check(name, condition):
@@ -123,6 +138,32 @@ def open_first_wave(session_id, *, prompt_id="prompt-validation"):
         request_revision=1,
         required_members=MEMBERS,
     )
+
+
+def v2_request_identity(session_id, wave, member):
+    identity = request_identity(
+        session_id, wave, member["role"], member["seat_id"]
+    )
+    identity.update(
+        {
+            "request_contract": V2_REQUEST_CONTRACT,
+            "prompt_contract_sha256": member["prompt_contract_sha256"],
+            "model_identity_receipt_sha256": member[
+                "model_identity_receipt_sha256"
+            ],
+        }
+    )
+    return identity
+
+
+def v2_claim_observation(identity):
+    return {
+        **claim_observation(identity),
+        "prompt_contract_sha256": identity["prompt_contract_sha256"],
+        "model_identity_receipt_sha256": identity[
+            "model_identity_receipt_sha256"
+        ],
+    }
 
 
 def cleanup(session_ids):
@@ -325,6 +366,174 @@ try:
     check(
         "wave-aware relationship and receipt audit passes",
         verification["coordinated"] is True,
+    )
+    check(
+        "implicit v1 contribution receipt remains byte-shape compatible",
+        first["contribution_receipt"]["contract"]
+        == "taey-native-dcm-receipt/v1"
+        and "request_contract" not in first["contribution_receipt"]
+        and "prompt_contract_sha256" not in first["contribution_receipt"]
+        and "model_identity_receipt_sha256"
+        not in first["contribution_receipt"],
+    )
+
+    v2_session = mesh.start_session(
+        "V2 NATIVE CONTRACT VALIDATION (throwaway)",
+        "scoped cleanup",
+        roles=["v2-role"],
+    )
+    session_ids.append(v2_session)
+    implicit_v2_membership_error = None
+    try:
+        mesh.open_wave(
+            v2_session,
+            round=1,
+            phase="independent",
+            prompt_id="v2-contract",
+            prompt_revision=1,
+            prompt_messages=PROMPT_MESSAGES,
+            attachment_evidence_digests=[],
+            request_revision=1,
+            required_members=V2_MEMBERS,
+        )
+    except ValueError as error:
+        implicit_v2_membership_error = str(error)
+    check(
+        "v2 member fields require the explicit v2 request contract",
+        implicit_v2_membership_error
+        == "each required member must contain exactly seat_id and role",
+    )
+    v2_wave = mesh.open_wave(
+        v2_session,
+        round=1,
+        phase="independent",
+        prompt_id="v2-contract",
+        prompt_revision=1,
+        prompt_messages=PROMPT_MESSAGES,
+        attachment_evidence_digests=[],
+        request_revision=1,
+        required_members=V2_MEMBERS,
+        request_contract=V2_REQUEST_CONTRACT,
+    )
+    v2_slot = v2_wave["slots"][0]
+    check(
+        "v2 wave membership freezes both per-slot contract digests",
+        v2_wave["request_contract"] == V2_REQUEST_CONTRACT
+        and v2_wave["membership_sha256"] == digest(V2_MEMBERS)
+        and v2_slot["prompt_contract_sha256"] == V2_PROMPT_CONTRACT_SHA256
+        and v2_slot["model_identity_receipt_sha256"]
+        == V2_MODEL_IDENTITY_RECEIPT_SHA256,
+    )
+    v2_identity = v2_request_identity(v2_session, v2_wave, V2_MEMBERS[0])
+    missing_v2_identity_field = dict(v2_identity)
+    missing_v2_identity_field.pop("model_identity_receipt_sha256")
+    exact_v2_request_fields_enforced = False
+    try:
+        mesh.canonical_wave_request_id(missing_v2_identity_field)
+    except ValueError:
+        exact_v2_request_fields_enforced = True
+    check(
+        "v2 request identity field set is exact",
+        exact_v2_request_fields_enforced,
+    )
+    v2_reservation = mesh.reserve_wave_request(
+        v2_session,
+        v2_wave["wave_id"],
+        role="v2-role",
+        request_revision=1,
+        request_identity=v2_identity,
+        parent_contribution_ids=[],
+    )
+    check(
+        "v2 request ID binds both contract digests",
+        v2_reservation["request_id"] == digest(v2_identity),
+    )
+    incomplete_v2_claim = v2_claim_observation(v2_identity)
+    incomplete_v2_claim.pop("prompt_contract_sha256")
+    exact_v2_claim_fields_enforced = False
+    try:
+        mesh.claim_wave_request(
+            v2_session,
+            v2_wave["wave_id"],
+            role="v2-role",
+            request_revision=1,
+            request_id=v2_reservation["request_id"],
+            parent_contribution_ids=[],
+            claim_observation=incomplete_v2_claim,
+        )
+    except mesh.WaveStateError as error:
+        exact_v2_claim_fields_enforced = error.outcome == "model_identity_unproven"
+    check(
+        "v2 claim observation field set is exact before inference authorization",
+        exact_v2_claim_fields_enforced,
+    )
+    v2_claim = mesh.claim_wave_request(
+        v2_session,
+        v2_wave["wave_id"],
+        role="v2-role",
+        request_revision=1,
+        request_id=v2_reservation["request_id"],
+        parent_contribution_ids=[],
+        claim_observation=v2_claim_observation(v2_identity),
+    )
+    check(
+        "matching v2 contract observations authorize inference once",
+        v2_claim["inference_authorized"] is True,
+    )
+    v2_contribution = mesh.contribute_wave(
+        v2_session,
+        v2_wave["wave_id"],
+        role="v2-role",
+        request_revision=1,
+        request_id=v2_reservation["request_id"],
+        structured_content={"role": "v2-role", "answer": "v2"},
+        claimed_peers=[],
+        observed_execution=observed(v2_identity),
+        emitter=emitter(v2_identity),
+    )
+    v2_receipt = dict(v2_contribution["contribution_receipt"])
+    v2_receipt_sha256 = v2_receipt.pop("receipt_sha256")
+    check(
+        "v2 contribution receipt binds request and contract evidence",
+        v2_receipt["contract"] == "taey-native-dcm-receipt/v2"
+        and v2_receipt["request_contract"] == V2_REQUEST_CONTRACT
+        and v2_receipt["prompt_contract_sha256"] == V2_PROMPT_CONTRACT_SHA256
+        and v2_receipt["model_identity_receipt_sha256"]
+        == V2_MODEL_IDENTITY_RECEIPT_SHA256
+        and v2_receipt_sha256 == digest(v2_receipt),
+    )
+    v2_closed = mesh.close_wave(v2_session, v2_wave["wave_id"])
+    check(
+        "v2 wave closes only with receipt-valid contract-bound membership",
+        v2_closed["close_outcome"] == "complete"
+        and mesh.verify_wave_coordination(v2_session, v2_wave["wave_id"])[
+            "coordinated"
+        ],
+    )
+    changed_v2_members = [dict(V2_MEMBERS[0])]
+    changed_v2_members[0]["prompt_contract_sha256"] = digest(
+        {"changed": "presence contract"}
+    )
+    v2_membership_drift_rejected = False
+    try:
+        mesh.open_wave(
+            v2_session,
+            round=1,
+            phase="critique",
+            prompt_id="v2-contract-critique",
+            prompt_revision=1,
+            prompt_messages=PROMPT_MESSAGES,
+            attachment_evidence_digests=[],
+            request_revision=1,
+            required_members=changed_v2_members,
+            request_contract=V2_REQUEST_CONTRACT,
+            parent_wave_id=v2_wave["wave_id"],
+        )
+    except mesh.WaveIdentityConflictError:
+        v2_membership_drift_rejected = True
+    check(
+        "per-slot v2 contract digests cannot drift between waves",
+        v2_membership_drift_rejected,
     )
 
     remapped_members = [dict(member) for member in MEMBERS]
