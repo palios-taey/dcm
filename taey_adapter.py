@@ -186,6 +186,23 @@ def _transport_receipt(
         graph_receipt_sha256 = wave["session_failure_sha256"]
     else:
         raise ValueError("terminal result lacks a valid graph receipt")
+    if terminal.get("outcome") == "session_failed":
+        if slot.get("state") not in {"pending", "claimed"}:
+            raise ValueError(
+                f"session_failed receipt is invalid for slot in state {slot.get('state')}"
+            )
+        inference_performed = False if slot.get("state") == "pending" else None
+        inference_state = (
+            "not_started"
+            if slot.get("state") == "pending"
+            else "side_effect_uncertain"
+        )
+    elif terminal.get("outcome") == "contributed":
+        inference_performed = True
+        inference_state = None
+    else:
+        inference_performed = terminal.get("inference_performed")
+        inference_state = None
     claim_observation = slot.get("claim_observation") or {}
     receipt = {
         "contract": (
@@ -253,15 +270,7 @@ def _transport_receipt(
             "duplicate_dispatch" if duplicate_dispatch else "claimed"
         ),
         "terminal_outcome": terminal["outcome"],
-        "inference_performed": (
-            True
-            if terminal["outcome"] == "contributed"
-            else False
-            if terminal["outcome"] == "session_failed" and slot["state"] == "pending"
-            else None
-            if terminal["outcome"] == "session_failed" and slot["state"] == "claimed"
-            else terminal["inference_performed"]
-        ),
+        "inference_performed": inference_performed,
         "contrib_id": terminal.get("contrib_id"),
         "contribution_receipt_sha256": (
             contribution_receipt["receipt_sha256"]
@@ -286,7 +295,7 @@ def _transport_receipt(
     }
     if terminal.get("outcome") == "session_failed":
         receipt["session_failure_sha256"] = terminal["session_failure_sha256"]
-        receipt["inference_state"] = terminal["inference_state"]
+        receipt["inference_state"] = inference_state
     if request_identity.get("request_contract") == "taey-native-dcm-request/v2":
         receipt.update(
             {
