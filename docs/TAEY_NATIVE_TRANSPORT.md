@@ -148,6 +148,254 @@ a second role-output schema.
 | graph `contrib_id` | Redis result acknowledgement |
 | Main final | closed `DCMSession.final` |
 
+## Cannot-lie receipt contract
+
+`taey-native-dcm-receipt/v1` is the normative contract for the first Taey-native adapter. It does
+not prove that a model understood a parent contribution or that a Redis-privileged actor is honest.
+It does make delivery, execution identity, graph authority, and acknowledgement mechanically
+correlatable without relying on JSONL or wall-clock order.
+
+### Canonical encoding and identity
+
+Every receipt is UTF-8 JSON encoded with keys sorted lexicographically, separators `(",", ":")`,
+`ensure_ascii=false`, and `allow_nan=false`. Set-like arrays are sorted and contain no duplicates.
+Digests use `sha256:<64 lowercase hex>`. `receipt_sha256` is the digest of the canonical object with
+that field omitted. Timestamps are diagnostic only; they never establish cross-host causal order.
+Each named digest hashes the canonical JSON value named by the contract; implementations never hash
+delimiter-free string concatenation. Ordered model messages remain ordered. Only fields explicitly
+described as set-like are sorted.
+
+Every contribution and transport receipt carries this immutable envelope:
+
+```json
+{
+  "contract": "taey-native-dcm-receipt/v1",
+  "receipt_kind": "contribution|transport",
+  "session_id": "dcm_...",
+  "correlation_id": "dcm_...",
+  "wave_id": "wave_...",
+  "round": 1,
+  "phase": "independent",
+  "prompt": {
+    "prompt_id": "...",
+    "revision": 1,
+    "sha256": "sha256:..."
+  },
+  "seat_id": "taey-council-1",
+  "role": "context-memory",
+  "request_revision": 1,
+  "request_id": "sha256:...",
+  "emitter": {
+    "component": "native-coordinator|taey-council-seat|dcm-adapter",
+    "process_generation": "..."
+  },
+  "graph": {
+    "uri": "bolt://127.0.0.1:7687",
+    "database": "neo4j"
+  },
+  "frontier": {
+    "parent_contribution_ids": [],
+    "parent_frontier_sha256": "sha256:...",
+    "claimed_peers": [],
+    "peers_present": []
+  },
+  "execution": {
+    "model_endpoint": "http://127.0.0.1:8767/v1/chat/completions",
+    "process_generation_expected": "...",
+    "process_generation_observed": "...",
+    "requested_alias": "ep3",
+    "served_alias": "ep3",
+    "model_manifest_sha256": "sha256:...",
+    "model_content_sha256": "sha256:...",
+    "serving_container_digest": "sha256:..."
+  },
+  "receipt_sha256": "sha256:..."
+}
+```
+
+For the first adapter, `correlation_id` and `session_id` are identical. A future translation requires
+a new contract version; no runtime may infer one. `prompt.sha256` hashes the canonical ordered model
+message list plus the ordered attachment/evidence content digests. `parent_frontier_sha256` hashes
+the canonical sorted `parent_contribution_ids` array. `request_id` hashes a canonical JSON object
+with these named fields:
+
+```text
+session_id, wave_id, round, phase
+prompt_id, prompt_revision, prompt_sha256
+seat_id, role, request_revision
+parent_frontier_sha256
+expected process generation
+model endpoint, requested alias
+model manifest/content digests, serving-container digest
+```
+
+Redis stream/list IDs and timestamps are excluded. A changed prompt, frontier, role, process
+generation, endpoint, model identity, or container identity requires a new request revision and
+therefore a new request ID. Missing execution identity is `model_identity_unproven`; alias or
+endpoint substitution is forbidden.
+
+### Contribution receipt
+
+After a successful graph commit, the envelope carries:
+
+```json
+{
+  "receipt_kind": "contribution",
+  "contribution": {
+    "contrib_id": "contrib_...",
+    "kind": "contribution",
+    "content_sha256": "sha256:...",
+    "about": null,
+    "severity": null,
+    "veto": false,
+    "disposition": null,
+    "evidence_ref": null,
+    "evidence_ref_sha256": null
+  },
+  "terminal_outcome": "contributed"
+}
+```
+
+`kind` uses the existing public DCM kinds: `contribution`, `plan_proposal`, `consensus_plan`,
+`concern`, or `resolution`. The existing structured `taey-council-contribution/v1` object remains
+the content; the receipt does not define another role-output schema. `content_sha256` hashes that
+canonical structured object. `evidence_ref_sha256`, when present, hashes the exact UTF-8 evidence
+reference string.
+
+For a Taey-native wave, all three sets below must be identical:
+
+```text
+request parent_contribution_ids
+= worker claimed_peers
+= graph-derived peers_present
+```
+
+The graph derives `peers_present` only from the immutable wave frontier. Same-wave siblings are never
+parents. `claimed_peers` remains a self-report about semantic incorporation; equality proves
+only that the worker made the required claim against the exact frontier it received. A mismatch is
+terminal `frontier_mismatch`, not a reduced frontier or a retry.
+
+On success, the observed process generation equals the expected generation, the served alias equals
+the requested alias, and the graph URI/database equal the explicitly configured DCM target. A
+receipt cannot silently substitute the orchestrator graph at port `7689`. The observed generation
+may be `null` only on a coordinator-issued pre-claim refusal; such a receipt cannot carry a
+contribution ID or claim that inference occurred.
+
+Exactly one contribution occupies `(session_id, wave_id, role, request_revision)`. Redelivery of
+an identical request returns the original contribution ID and receipt without another inference or
+write. The same identity with different canonical content is terminal `identity_conflict`.
+
+### Redis transport receipt
+
+One transport schema records both the non-terminal claim and the terminal acknowledgement:
+
+```json
+{
+  "receipt_kind": "transport",
+  "stage": "dispatch_claimed|terminal_acknowledged",
+  "delivery_id": "...",
+  "acknowledgement_id": null,
+  "claim_outcome": "claimed",
+  "terminal_outcome": null,
+  "inference_performed": false,
+  "contrib_id": null,
+  "contribution_receipt_sha256": null,
+  "original_request_id": null,
+  "failure_stage": null,
+  "failure_detail_sha256": null
+}
+```
+
+`dispatch_claimed` is evidence that one live, role-bound process generation claimed the delivery.
+It is not a Redis acknowledgement and does not authorize removal from pending state. It is emitted
+only after validating the exact seat, role, process generation, request revision, parent frontier,
+endpoint, and model identity.
+
+`terminal_acknowledged` is emitted only after either the authoritative Neo4j contribution commits
+or a closed failure outcome is recorded. Only then may the delivery leave Redis pending state. On
+success it must carry the exact `contrib_id` and `contribution_receipt_sha256` verified from
+Neo4j.
+
+If graph commit succeeds but acknowledgement delivery fails, Neo4j remains authoritative. Recovery
+reads the contribution by deterministic request ID and re-emits the same acknowledgement. It keeps
+the original contribution receipt and inference-process generation unchanged while the transport
+receipt's `emitter.process_generation` identifies the recovery process. It never performs inference
+again. A duplicate delivery records `duplicate_dispatch`, points at the original request, and
+returns the original terminal receipt.
+
+### Closed outcomes and wave advancement
+
+Claim-time refusal outcomes are:
+
+```text
+dead_seat
+duplicate_dispatch
+terminal_identity_skipped
+stale_version
+generation_mismatch
+model_identity_unproven
+unknown_role
+closed_session
+closed_wave
+```
+
+Per-request terminal outcomes are:
+
+```text
+contributed
+terminal_identity_skipped
+stale_version
+dead_seat
+timeout
+frontier_mismatch
+identity_conflict
+inference_failed
+validation_failed
+graph_commit_failed
+cancelled
+superseded
+```
+
+Every refusal or failure records `inference_performed` truthfully. No failure authorizes alias
+substitution, endpoint selection, process takeover, frontier reduction, blind retry, or a second
+inference under the same request ID.
+
+A wave advances only when every required role slot is `contributed`. Each missing, failed,
+cancelled, or superseded slot remains explicit; any such slot makes the wave `incomplete_round`.
+Required membership cannot shrink after opening. A terminal historical request produces
+`terminal_identity_skipped`, performs no inference, and remains tied to its original terminal
+session and preservation digest.
+
+### Concern clearance and final publication
+
+A `resolution` names exactly one `concern` through the existing `about` field and preserves the public
+DCM disposition rules. `FIX-VERIFIED` and `FALSE-POSITIVE` require a non-empty evidence reference,
+bound in the receipt as both `evidence_ref` and `evidence_ref_sha256`.
+
+Before final publication, the graph recomputes `open_concerns(session_id)` and produces this
+clearance projection from the complete contribution frontier:
+
+```json
+{
+  "open_blocking_concern_ids": [],
+  "closed_concerns": [
+    {
+      "concern_id": "contrib_...",
+      "resolution_id": "contrib_...",
+      "disposition": "FIX-VERIFIED",
+      "evidence_ref": "...",
+      "evidence_ref_sha256": "sha256:..."
+    }
+  ],
+  "clearance_frontier_sha256": "sha256:..."
+}
+```
+
+Warnings remain visible and are not relabelled as resolved. `publish_final()` must atomically bind
+the synthesis digest, complete contribution frontier, and clearance digest while transitioning one
+open session to closed. A closed session, closed wave, or superseded revision cannot accept another
+contribution or final.
+
 ## Current production blockers
 
 Do not start the seven seat services merely to test this contract. Their existing Redis registrations
