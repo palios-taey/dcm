@@ -50,47 +50,183 @@ jobs:
         run: |
           set -euo pipefail
 
-          # Resolve the head SHA + base ref for both pull_request and status events.
+          # Resolve one exact PR head before any status write.
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             HEAD_SHA="${{ github.event.pull_request.head.sha }}"
-            BASE_REF="${{ github.event.pull_request.base.ref }}"
-            PR_NUM="${{ github.event.pull_request.number }}"
           else
             HEAD_SHA="${{ github.event.sha }}"
-            # find an open PR whose head is this SHA
-            PR_JSON="$(gh api "repos/$REPO/commits/$HEAD_SHA/pulls" 2>/dev/null || echo '[]')"
-            PR_NUM="$(echo "$PR_JSON" | jq -r '.[0].number // empty')"
-            BASE_REF="$(echo "$PR_JSON" | jq -r '.[0].base.ref // empty')"
-            if [ -z "$PR_NUM" ]; then
-              echo "status event for $HEAD_SHA maps to no open PR — nothing to gate."
-              exit 0
-            fi
           fi
-          echo "PR #$PR_NUM head=$HEAD_SHA base=$BASE_REF"
 
           set_status() {  # state, description
+            if [[ ! "${PR_NUM:-}" =~ ^[0-9]+$ ]]; then
+              echo "refusing status write without a bound PR" >&2
+              return 1
+            fi
+            if ! live_prs="$(gh api "repos/$REPO/commits/$HEAD_SHA/pulls?per_page=100")" ||
+               ! live_open="$(echo "$live_prs" | jq -c --arg head "$HEAD_SHA" \
+                 '[.[] | select(.state == "open" and .head.sha == $head)]')" ||
+               ! live_count="$(echo "$live_open" | jq 'length')"; then
+              echo "refusing status write: current open PR binding is unresolved" >&2
+              return 1
+            fi
+            if [ "$live_count" -eq 0 ]; then
+              echo "refusing status write: no PR is open at $HEAD_SHA" >&2
+              return 1
+            fi
+            if [ "$live_count" -ne 1 ]; then
+              gh api -X POST "repos/$REPO/statuses/$HEAD_SHA" \
+                -f state=failure -f context="r5-audit-gate" \
+                -f description="R5 gate error: ambiguous open PR binding" >/dev/null
+              echo "r5-audit-gate -> failure (ambiguous open PR binding)"
+              return 1
+            fi
+            if [ "$(echo "$live_open" | jq -r '.[0].number')" != "$PR_NUM" ]; then
+              echo "refusing status write: bound PR changed for $HEAD_SHA" >&2
+              return 1
+            fi
             gh api -X POST "repos/$REPO/statuses/$HEAD_SHA" \
               -f state="$1" -f context="r5-audit-gate" -f description="$2" >/dev/null
             echo "r5-audit-gate -> $1 ($2)"
           }
 
-          # Changed files vs base.
-          git fetch -q origin "$BASE_REF"
-          python3 scripts/r5-risk-classifier "origin/$BASE_REF" "$HEAD_SHA" \
-            --risk-paths .github/r5-risky-paths | tee /tmp/r5-risk.txt
+          if [[ ! "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "invalid head SHA from event: $HEAD_SHA" >&2
+            exit 1
+          fi
+
+          # Bind both event paths to a current open PR object at the exact head.
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            PR_NUM="${{ github.event.pull_request.number }}"
+            if [[ ! "$PR_NUM" =~ ^[0-9]+$ ]] ||
+               ! PR_JSON="$(gh api "repos/$REPO/pulls/$PR_NUM")"; then
+              echo "unable to resolve pull-request event binding" >&2
+              exit 1
+            fi
+            if ! BOUND_PR="$(echo "$PR_JSON" | jq -c --arg head "$HEAD_SHA" \
+              'select(.state == "open" and .head.sha == $head)')"; then
+              echo "invalid pull-request event binding response" >&2
+              exit 1
+            fi
+            if [ -z "$BOUND_PR" ]; then
+              echo "PR #$PR_NUM is no longer open at $HEAD_SHA — no status write."
+              exit 0
+            fi
+          else
+            if ! PR_JSON="$(gh api "repos/$REPO/commits/$HEAD_SHA/pulls?per_page=100")"; then
+              echo "unable to resolve an open PR binding for $HEAD_SHA" >&2
+              exit 1
+            fi
+            if ! OPEN_PRS="$(echo "$PR_JSON" | jq -c --arg head "$HEAD_SHA" \
+              '[.[] | select(.state == "open" and .head.sha == $head)]')" ||
+               ! PR_COUNT="$(echo "$OPEN_PRS" | jq 'length')"; then
+              echo "invalid PR binding response for $HEAD_SHA" >&2
+              exit 1
+            fi
+            if [ "$PR_COUNT" -eq 0 ]; then
+              echo "status event for $HEAD_SHA maps to no open PR — preserving existing status."
+              exit 0
+            fi
+            if [ "$PR_COUNT" -ne 1 ]; then
+              if ! PR_NUM="$(echo "$OPEN_PRS" | jq -r '.[0].number')"; then
+                echo "invalid ambiguous PR binding response for $HEAD_SHA" >&2
+                exit 1
+              fi
+              set_status failure "R5 gate error: ambiguous open PR binding"
+              exit 1
+            fi
+            if ! BOUND_PR="$(echo "$OPEN_PRS" | jq -c '.[0]')"; then
+              echo "invalid exact PR binding response for $HEAD_SHA" >&2
+              exit 1
+            fi
+          fi
+
+          if ! PR_NUM="$(echo "$BOUND_PR" | jq -r '.number')" ||
+             [[ ! "$PR_NUM" =~ ^[0-9]+$ ]]; then
+            echo "invalid bound PR number for $HEAD_SHA" >&2
+            exit 1
+          fi
+          if ! BASE_REF="$(echo "$BOUND_PR" | jq -r '.base.ref')" ||
+             ! BASE_SHA="$(echo "$BOUND_PR" | jq -r '.base.sha')" ||
+             [[ ! "$BASE_SHA" =~ ^[0-9a-f]{40}$ ]] ||
+             [ -z "$BASE_REF" ]; then
+            set_status failure "R5 gate error: invalid immutable PR binding"
+            exit 1
+          fi
+          echo "PR #$PR_NUM head=$HEAD_SHA base=$BASE_REF base_sha=$BASE_SHA"
+          set_status pending "R5 gate evaluating immutable PR fork"
+
+          if ! git fetch -q origin "$BASE_SHA"; then
+            set_status failure "R5 gate error: unable to fetch exact PR base"
+            exit 1
+          fi
+          if [ "$(git rev-parse FETCH_HEAD)" != "$BASE_SHA" ]; then
+            set_status failure "R5 gate error: fetched PR base does not match binding"
+            exit 1
+          fi
+          if ! git fetch -q origin "pull/$PR_NUM/head"; then
+            set_status failure "R5 gate error: unable to fetch PR head"
+            exit 1
+          fi
+          if [ "$(git rev-parse FETCH_HEAD)" != "$HEAD_SHA" ] ||
+             ! git cat-file -e "${BASE_SHA}^{commit}" ||
+             ! git cat-file -e "${HEAD_SHA}^{commit}"; then
+            set_status failure "R5 gate error: PR binding changed during evaluation"
+            exit 1
+          fi
+
+          if git merge-base --is-ancestor "$HEAD_SHA" "$BASE_SHA"; then
+            set_status failure "R5 gate error: open PR head is already contained in base"
+            exit 1
+          else
+            ancestor_rc="$?"
+            if [ "$ancestor_rc" -ne 1 ]; then
+              set_status failure "R5 gate error: unable to verify PR ancestry"
+              exit 1
+            fi
+          fi
+
+          if ! FORK_SHA="$(git merge-base "$BASE_SHA" "$HEAD_SHA")"; then
+            set_status failure "R5 gate error: unable to resolve immutable PR fork"
+            exit 1
+          fi
+          if [[ ! "$FORK_SHA" =~ ^[0-9a-f]{40}$ ]] || [ "$FORK_SHA" = "$HEAD_SHA" ]; then
+            set_status failure "R5 gate error: invalid immutable PR fork"
+            exit 1
+          fi
+          echo "PR #$PR_NUM fork=$FORK_SHA head=$HEAD_SHA"
+
+          if ! python3 scripts/r5-risk-classifier "$FORK_SHA" "$HEAD_SHA" \
+               --risk-paths .github/r5-risky-paths | tee /tmp/r5-risk.txt; then
+            set_status failure "R5 gate error: classifier execution failed"
+            exit 1
+          fi
           RISKY="$(awk -F= '$1 == "RISKY" {print $2}' /tmp/r5-risk.txt | tail -n 1)"
+          if [[ ! "$RISKY" =~ ^[01]$ ]]; then
+            set_status failure "R5 gate error: classifier produced no verdict"
+            exit 1
+          fi
+
+          if ! STATUSES="$(gh api "repos/$REPO/commits/$HEAD_SHA/status")"; then
+            set_status failure "R5 gate error: unable to read audit statuses"
+            exit 1
+          fi
+          if ! grok_state="$(echo "$STATUSES" | jq -r '[.statuses[] | select(.context=="audit/grok")] | .[0].state // "missing"')" ||
+             ! gk_state="$(echo "$STATUSES" | jq -r '[.statuses[] | select(.context=="audit/gatekeeper")] | .[0].state // "missing"')"; then
+            set_status failure "R5 gate error: invalid audit status response"
+            exit 1
+          fi
+          echo "audit/grok=$grok_state audit/gatekeeper=$gk_state"
 
           if [ "$RISKY" -eq 0 ]; then
-            set_status success "no R5 risky surface touched"
+            if [ "$grok_state" = "success" ] && [ "$gk_state" = "success" ]; then
+              set_status success "R5 ENDORSED: grok + gatekeeper"
+            else
+              set_status success "no R5 risky surface touched"
+            fi
             exit 0
           fi
 
           # Risky: require BOTH auditor statuses = success on HEAD_SHA.
-          STATUSES="$(gh api "repos/$REPO/commits/$HEAD_SHA/statuses" --paginate 2>/dev/null || echo '[]')"
-          grok_state="$(echo "$STATUSES" | jq -r '[.[] | select(.context=="audit/grok")] | .[0].state // "missing"')"
-          gk_state="$(echo "$STATUSES" | jq -r '[.[] | select(.context=="audit/gatekeeper")] | .[0].state // "missing"')"
-          echo "audit/grok=$grok_state audit/gatekeeper=$gk_state"
-
           if [ "$grok_state" = "success" ] && [ "$gk_state" = "success" ]; then
             set_status success "R5 ENDORSED: grok + gatekeeper"
           else
