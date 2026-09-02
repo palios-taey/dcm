@@ -4,6 +4,7 @@ import concurrent.futures as cf
 import os
 import re
 import sys
+import threading
 import time
 import uuid
 
@@ -84,6 +85,16 @@ def check(name, condition):
 
 def digest(value):
     return mesh._canonical_sha256(value)
+
+
+def race_operation(barrier, operation, delay=0.0):
+    barrier.wait()
+    if delay:
+        time.sleep(delay)
+    try:
+        return {"ok": True, "value": operation()}
+    except mesh.WaveStateError as error:
+        return {"ok": False, "outcome": error.outcome}
 
 
 def request_identity(session_id, wave, role, seat, *, generation="generation-1"):
@@ -1952,6 +1963,176 @@ try:
         and failure_race_wave["session_status"] == "failed"
         and failure_race_wave["status"] == "closed"
         and failure_race_wave["active_wave_id"] is None,
+    )
+
+    contribution_race_observations = []
+    for favored_operation in ("failure", "contribution"):
+        for trial in range(3):
+            contribution_race_session = mesh.start_session(
+                "FAILURE CONTRIBUTION RACE VALIDATION (throwaway)",
+                "scoped cleanup",
+                roles=["only"],
+            )
+            session_ids.append(contribution_race_session)
+            contribution_race_wave = mesh.open_wave(
+                contribution_race_session,
+                round=1,
+                phase="independent",
+                prompt_id=f"failure-contribution-race-{favored_operation}-{trial}",
+                prompt_revision=1,
+                prompt_messages=PROMPT_MESSAGES,
+                attachment_evidence_digests=[],
+                request_revision=1,
+                required_members=amended_members,
+            )
+            contribution_race_identity, contribution_race_request_id = reserve(
+                contribution_race_session,
+                contribution_race_wave,
+                "only",
+                "taey-council-1",
+            )
+            claim(
+                contribution_race_session,
+                contribution_race_wave,
+                "only",
+                contribution_race_identity,
+                contribution_race_request_id,
+            )
+            contribution_race_barrier = threading.Barrier(2)
+            failure_delay = 0.0 if favored_operation == "failure" else 0.1
+            contribution_delay = (
+                0.0 if favored_operation == "contribution" else 0.1
+            )
+            with cf.ThreadPoolExecutor(max_workers=2) as executor:
+                contribution_race_futures = (
+                    executor.submit(
+                        race_operation,
+                        contribution_race_barrier,
+                        lambda: mesh.fail_session(
+                            contribution_race_session,
+                            failure_kind="coordinator_failure",
+                            failure_detail_sha256=mesh._text_sha256(
+                                "concurrent contribution failure"
+                            ),
+                        ),
+                        failure_delay,
+                    ),
+                    executor.submit(
+                        race_operation,
+                        contribution_race_barrier,
+                        lambda: contribute(
+                            contribution_race_session,
+                            contribution_race_wave,
+                            "only",
+                            contribution_race_identity,
+                            contribution_race_request_id,
+                            "concurrent contribution",
+                        ),
+                        contribution_delay,
+                    ),
+                )
+                contribution_race_fail, contribution_race_write = (
+                    future.result() for future in contribution_race_futures
+                )
+            contribution_race_wave = mesh.read_wave(
+                contribution_race_session, contribution_race_wave["wave_id"]
+            )
+            failure_first = favored_operation == "failure"
+            contribution_race_observations.append(
+                contribution_race_fail["ok"]
+                and contribution_race_wave["session_status"] == "failed"
+                and contribution_race_wave["status"] == "closed"
+                and contribution_race_wave["active_wave_id"] is None
+                and (
+                    contribution_race_write.get("outcome") == "closed_session"
+                    and contribution_race_wave["slots"][0]["state"] == "claimed"
+                    and contribution_race_wave["contributions"] == []
+                    if failure_first
+                    else contribution_race_write["ok"]
+                    and contribution_race_wave["slots"][0]["state"]
+                    == "contributed"
+                    and len(contribution_race_wave["contributions"]) == 1
+                )
+            )
+    check(
+        "failure and wave contribution preserve both serialized orderings in three trials",
+        len(contribution_race_observations) == 6
+        and all(contribution_race_observations),
+    )
+
+    publication_race_observations = []
+    for favored_operation in ("failure", "publication"):
+        for trial in range(3):
+            publication_race_session = mesh.start_session(
+                "FAILURE PUBLICATION RACE VALIDATION (throwaway)",
+                "scoped cleanup",
+                roles=["only"],
+            )
+            session_ids.append(publication_race_session)
+            mesh.contribute(
+                publication_race_session,
+                "only",
+                "linear contribution",
+                [],
+                read_version=0,
+            )
+            publication_race_barrier = threading.Barrier(2)
+            failure_delay = 0.0 if favored_operation == "failure" else 0.1
+            publication_delay = (
+                0.0 if favored_operation == "publication" else 0.1
+            )
+            with cf.ThreadPoolExecutor(max_workers=2) as executor:
+                publication_race_futures = (
+                    executor.submit(
+                        race_operation,
+                        publication_race_barrier,
+                        lambda: mesh.fail_session(
+                            publication_race_session,
+                            failure_kind="coordinator_failure",
+                            failure_detail_sha256=mesh._text_sha256(
+                                "concurrent final publication failure"
+                            ),
+                        ),
+                        failure_delay,
+                    ),
+                    executor.submit(
+                        race_operation,
+                        publication_race_barrier,
+                        lambda: mesh.publish_final(
+                            publication_race_session, "concurrent final"
+                        ),
+                        publication_delay,
+                    ),
+                )
+                publication_race_failure, publication_race_final = (
+                    future.result() for future in publication_race_futures
+                )
+            publication_race_state = mesh.read_session(publication_race_session)
+            failure_first = favored_operation == "failure"
+            publication_race_observations.append(
+                sum(
+                    result["ok"]
+                    for result in (
+                        publication_race_failure,
+                        publication_race_final,
+                    )
+                )
+                == 1
+                and (
+                    publication_race_final.get("outcome") == "closed_session"
+                    and publication_race_state["status"] == "failed"
+                    and publication_race_state["final"] is None
+                    if failure_first
+                    else publication_race_failure.get("outcome")
+                    == "closed_session"
+                    and publication_race_state["status"] == "closed"
+                    and publication_race_state["final"] == "concurrent final"
+                )
+            )
+    check(
+        "failure and final publication preserve both terminal orderings in three trials",
+        len(publication_race_observations) == 6
+        and all(publication_race_observations),
     )
 
     linear_session = mesh.start_session(
