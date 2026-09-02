@@ -25,6 +25,7 @@ jobs:
           - 7687:7687
     env:
       DCM_NEO4J_URI: bolt://127.0.0.1:7687
+      DCM_NEO4J_DATABASE: neo4j
       NEO4J_AUTH: none
     steps:
       - uses: actions/checkout@v4
@@ -60,3 +61,5 @@ jobs:
         run: python3 docs_coherence_check.py
       - name: Execute DCM substrate validation against Neo4j
         run: python3 validate_substrate.py
+      - name: Execute concurrent-wave validation against Neo4j
+        run: python3 validate_wave_api.py

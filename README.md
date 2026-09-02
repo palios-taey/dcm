@@ -77,6 +77,15 @@ the void and silently work alone**, then report success. DCM's mechanisms, state
   **does not** prove semantic incorporation and cannot catch an agent that lies by claiming
   reads it didn't do — that is unprovable from a graph. The structural guarantee is the CAS;
   this is the read-claim audit layered on it.
+- **Additive concurrent waves** — `open_wave()` freezes one parent frontier and one exact seat/role
+  slot per request revision. `reserve_wave_request()` binds Main's request before Redis delivery;
+  `claim_wave_request()` authorizes at most one verified inference identity per slot. Duplicate
+  delivery never authorizes another inference. Sibling results use `contribute_wave()` and
+  `IN_WAVE`, not the linear `seq`/`IN` log, so they can infer concurrently without stale-read
+  regeneration. `close_wave()` advances only a complete immutable membership, or explicitly
+  accounts for a superseded prompt revision; `verify_wave_coordination()` audits every sibling
+  against the exact graph-derived parent set. `publish_final()` accepts exactly one complete
+  critique frontier and then makes both linear and wave writes structurally impossible.
 
 **What DCM does NOT claim:** that coordination "cannot be faked" in the absolute. Semantic
 incorporation is the agent's asserted good faith, backed by the structural guarantee that the
@@ -85,7 +94,7 @@ peers were in front of it and that it could not commit while ignoring the versio
 ## Files
 | File | What |
 |---|---|
-| `mesh.py` | the substrate: `start_session` / `read_session` (one-read bundle + `version` + any `final`) / `contribute(read_version)` (real CAS) / `verify_coordination` / `publish_final`. Neo4j-backed (own `:DCMSession`/`:DCMContribution` namespace; set `DCM_NEO4J_URI`). |
+| `mesh.py` | the substrate: unchanged linear CAS plus the additive `open_wave` / `read_wave` / `reserve_wave_request` / `claim_wave_request` / `contribute_wave` / `record_wave_outcome` / `close_wave` / `verify_wave_coordination` path. Neo4j-backed (own `:DCMSession`/`:DCMWave`/`:DCMWaveSlot`/`:DCMContribution` namespace; set `DCM_NEO4J_URI`). |
 | `council.py` | the council: differentiated reviewers off the producer base → Foundation pre-flight grounding → cite-or-block + destructive-ops floor gates → blind round → reveal/evidence-gated resolution → `publish_final`. `council_plan` (consensus plan) / `council_review` (verdict, `tier=` scales the roster). |
 | `council_cli.py` | the zero-improvisation invocation: `plan` / `review`. **Start here — see [`SKILL.md`](./SKILL.md).** |
 | `scaling.py` | the roster is the FULL 9-role defined library, always — a 10–12-seat council with producer + synthesizer. No 3/4-seat option (the rejected stub); high blast radius only adds a 2nd producer. |
@@ -96,13 +105,20 @@ peers were in front of it and that it could not commit while ignoring the versio
 | `mesh_cli.py` | the substrate's own CLI: inspect a session, read contributions, check coordination without running a council. |
 | `arms_literals.py` | the frozen role literals shared by the council and historical evaluation — literal, so a role cannot drift between runs. |
 | `validate_substrate.py` | proves the CAS actually serialises: concurrent contributors, one winner per version. Run it before trusting a deployment. |
+| `validate_wave_api.py` | validates graph-backed pre-inference idempotency, lost-ack recovery, seven sibling commits, exact seat/role continuity, immutable parent advancement, explicit incomplete and superseded rounds, linear/wave isolation, and terminal final immutability. |
 | `docs_coherence_check.py` | fails when this README and the code disagree — the map is checked, not maintained by hope. |
 | `setup.sh` | one-command install of the runtime the CLIs and adapters need. |
 
-## The one invariant (participant-agnostic)
-Every participant — code agent, served model, CLI — funnels through the **same**
-`mesh.contribute(read_version)` chokepoint via a thin adapter. That single CAS token enforces
-read-before-write uniformly.
+## The two explicit coordination invariants
+
+- Sequential CLI councils use `read_session()` then `contribute(read_version)`. The unique linear
+  slot serializes writers and forces a stale participant to read the peer who advanced the log.
+- Concurrent Taey waves use one immutable graph-derived parent frontier. Every role is claimed
+  before inference, commits once to its own wave slot, and cannot advance unless every frozen role
+  contributed. Same-wave siblings are deliberately not treated as unseen parents.
+
+The paths use different relationships and constraints. A wave contribution never enters the
+linear `IN` log or changes its version.
 
 ## Security — read this before you run a council
 > **CRITICAL, by design and unmitigated:** the council's "experts" are real CLI agents (codex /
@@ -115,6 +131,7 @@ read-before-write uniformly.
 
 ## Adoption / config (env)
 - `DCM_NEO4J_URI` (default `bolt://localhost:7687`) — the mesh graph.
+- `DCM_NEO4J_DATABASE` (default `neo4j`) — the explicit graph database.
 - `DCM_NEO4J_USER` / `DCM_NEO4J_PASSWORD` — Neo4j auth (optional on loopback).
 - `TAEY_DCM_URL` (default `http://localhost:8765/v1/chat/completions`) — served model for `taey_adapter`.
 - **Security — fail-closed:** a **non-loopback** `DCM_NEO4J_URI` with **no auth** is *refused*

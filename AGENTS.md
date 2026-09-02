@@ -17,13 +17,14 @@ python3 -m venv .venv && . .venv/bin/activate   # venv required on PEP-668 syste
 pip install .         # deps (neo4j) + the dcm-council / dcm-mesh entry points
 ./setup.sh            # checks deps + a reachable DCM_NEO4J_URI, prints the next step
 ```
-Config is one env group: `DCM_NEO4J_URI` (default `bolt://localhost:7687`), `DCM_NEO4J_USER` /
-`DCM_NEO4J_PASSWORD` (optional on loopback; a non-loopback URI with no auth is REFUSED, fail-closed).
+Config is one env group: `DCM_NEO4J_URI` (default `bolt://localhost:7687`),
+`DCM_NEO4J_DATABASE` (default `neo4j`), and `DCM_NEO4J_USER` / `DCM_NEO4J_PASSWORD`
+(optional on loopback; a non-loopback URI with no auth is REFUSED, fail-closed).
 
 ## Code map
 | File | What it is |
 |---|---|
-| `mesh.py` | substrate: `start_session` / `read_session` / `contribute(read_version)` (real CAS) / `publish_final` (fails closed on open block-concerns) / `verify_coordination`. |
+| `mesh.py` | substrate: linear CAS plus additive concurrent waves with graph-reserved requests, verified inference claims, immutable parent frontiers, exact receipts, explicit terminal outcomes, and one terminal final. |
 | `mesh_cli.py` | agent ⇄ mesh interface: `start` / `read` / `contribute` / `status` / `publish`. |
 | `cli_adapter.py` | runs a real CLI as a mesh expert (`cli_expert`); prompts via stdin / `--prompt-file` (never argv). |
 | `council.py` | `council_plan` / `council_review`: seat roster, Foundation pre-flight grounding → blind round → reveal/resolution, evidence-gated publish. |
@@ -54,5 +55,6 @@ python mesh_cli.py contribute <session_id> <role> <read_version> --content -
 ## Verification
 ```bash
 python validate_substrate.py        # proves the CAS serializes (N-thread race → 1 win / N-1 stale)
+python validate_wave_api.py         # proves seven-seat wave, replay, supersession, and final invariants
 python docs_coherence_check.py       # fails if CLAUDE.md drifts from the code
 ```
