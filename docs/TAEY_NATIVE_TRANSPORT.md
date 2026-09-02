@@ -66,8 +66,11 @@ The public DCM package provides these state transitions:
    `04db75960b6a8a1eef4f2231779bd9738f7873f5`.
 2. `mesh.read_session()` returns all contributions and a linear version.
 3. `mesh.contribute()` writes one `DCMContribution` into the unique `(session_id, seq)` slot.
-4. `mesh.publish_final()` closes the session after the typed-concern projection clears.
-5. `taey_adapter.taey_expert()` is a synchronous reference adapter. A stale write repeats the full
+4. `mesh.publish_final()` closes a successful session after the typed-concern projection clears.
+5. `mesh.fail_session()` atomically closes an unsuccessful session and any active wave while
+   preserving its slots' last honest states. Exact failure replay is idempotent; conflicting
+   terminal identity and every post-terminal write are rejected.
+6. `taey_adapter.taey_expert()` is a synchronous reference adapter. A stale write repeats the full
    model request. Nothing in the package invokes it as an always-on worker.
 
 The existing constraints are unique `DCMSession.session_id`, unique
@@ -110,7 +113,8 @@ Add a separate wave path with these semantics:
 
 The public operations are `open_wave()`, `read_wave()`, `reserve_wave_request()`,
 `claim_wave_request()`, `contribute_wave()`, `record_wave_outcome()`,
-`verify_wave_coordination()`, `close_wave()`, `open_concerns()`, and `publish_final()`. Main reserves each graph-bound request before
+`verify_wave_coordination()`, `close_wave()`, `open_concerns()`, `publish_final()`, and
+`fail_session()`. Main reserves each graph-bound request before
 placing it in Redis. The role-bound worker proves its exact live seat, process generation, endpoint,
 alias, model, and container identity before the graph claim authorizes inference. Commit-time
 deduplication alone would let two duplicate deliveries both invoke the model before one lost the

@@ -94,6 +94,8 @@ _WAVE_FAILURE_OUTCOMES = {
     "generation_mismatch",
     "model_identity_unproven",
 }
+_SESSION_FAILURE_CONTRACT = "dcm-session-failure/v1"
+_SESSION_FAILURE_KIND_RE = re.compile(r"^[a-z][a-z0-9_]{0,127}$")
 _REQUEST_CONTRACT_V2 = "taey-native-dcm-request/v2"
 _RECEIPT_CONTRACT_V2 = "taey-native-dcm-receipt/v2"
 _PRESENCE_ROUND_SESSION_ID_RE = re.compile(
@@ -221,6 +223,10 @@ class SessionIdentityValidationError(ValueError):
 
 class SessionIdentityConflictError(ValueError):
     """Raised when a caller tries to create an external session that already exists."""
+
+
+class SessionTerminalConflictError(ValueError):
+    """Raised when terminal session identity is replayed with different content."""
 
 
 class WaveFrontierMismatchError(WaveStateError):
@@ -3508,6 +3514,228 @@ def open_concerns(session_id: str) -> list[dict]:
     return _project_open_concerns(contributions)
 
 
+def fail_session(
+    session_id: str,
+    *,
+    failure_kind: str,
+    failure_detail_sha256: str,
+) -> dict:
+    """Atomically fail one open session and close its active wave without rewriting slots."""
+    session_id = _require_text(session_id, "session_id")
+    failure_kind = _require_text(failure_kind, "failure_kind")
+    if _SESSION_FAILURE_KIND_RE.fullmatch(failure_kind) is None:
+        raise ValueError(
+            "failure_kind must be lowercase snake_case with at most 128 characters"
+        )
+    failure_detail_sha256 = _require_sha256(
+        failure_detail_sha256, "failure_detail_sha256"
+    )
+
+    def terminalize(tx):
+        owner = tx.run(
+            """MATCH (x:DCMSession {session_id:$sid})
+               WHERE x.status='open' AND x.final IS NULL
+               SET x.coordination_tx_epoch = coalesce(x.coordination_tx_epoch, 0) + 1,
+                   x.wave_tx_epoch = coalesce(x.wave_tx_epoch, 0) + 1
+               RETURN properties(x) AS session""",
+            sid=session_id,
+        ).single()
+        if owner is None:
+            existing = tx.run(
+                """MATCH (x:DCMSession {session_id:$sid})
+                   RETURN properties(x) AS session""",
+                sid=session_id,
+            ).single()
+            if existing is None:
+                raise ValueError(f"no DCM session {session_id}")
+            current = dict(existing["session"])
+        else:
+            current = dict(owner["session"])
+        open_wave_rows = list(
+            tx.run(
+                """MATCH (w:DCMWave {session_id:$sid, status:'open'})
+                   OPTIONAL MATCH (w)-[r:IN_SESSION]->(linked:DCMSession)
+                   RETURN w.wave_id AS wave_id, count(r) AS session_links,
+                          collect(linked.session_id) AS linked_session_ids
+                   ORDER BY wave_id""",
+                sid=session_id,
+            )
+        )
+        if any(
+            row["session_links"] != 1 or row["linked_session_ids"] != [session_id]
+            for row in open_wave_rows
+        ):
+            raise WaveStateError(
+                "invalid_terminal_state",
+                "an open wave lacks exactly one relationship to its owning session",
+            )
+        open_wave_ids = [row["wave_id"] for row in open_wave_rows]
+        active_wave_id = current.get("active_wave_id")
+
+        if current.get("status") == "failed":
+            if active_wave_id is not None or open_wave_ids:
+                raise WaveStateError(
+                    "invalid_terminal_state",
+                    "a failed session cannot retain an active or open wave",
+                )
+            record_json = current.get("terminal_failure_json")
+            record_sha256 = current.get("terminal_failure_sha256")
+            try:
+                record = json.loads(record_json)
+            except (TypeError, json.JSONDecodeError) as exc:
+                raise WaveStateError(
+                    "invalid_terminal_state",
+                    "failed session has no valid terminal failure record",
+                ) from exc
+            if (
+                not isinstance(record, dict)
+                or set(record)
+                != {
+                    "contract",
+                    "session_id",
+                    "failure_kind",
+                    "failure_detail_sha256",
+                    "wave_id",
+                }
+                or record.get("contract") != _SESSION_FAILURE_CONTRACT
+                or record.get("session_id") != session_id
+                or record_sha256 != _canonical_sha256(record)
+                or current.get("failure_kind") != record.get("failure_kind")
+                or current.get("failure_detail_sha256")
+                != record.get("failure_detail_sha256")
+                or current.get("failure_wave_id") != record.get("wave_id")
+                or current.get("final") is not None
+            ):
+                raise WaveStateError(
+                    "invalid_terminal_state",
+                    "failed session terminal properties are not self-consistent",
+                )
+            if record["wave_id"] is not None:
+                failed_wave = tx.run(
+                    """MATCH (w:DCMWave {session_id:$sid, wave_id:$wid})
+                         -[r:IN_SESSION]->(x:DCMSession {session_id:$sid})
+                       RETURN w.status AS status, w.close_outcome AS close_outcome,
+                              w.session_failure_sha256 AS session_failure_sha256,
+                              count(r) AS session_links""",
+                    sid=session_id,
+                    wid=record["wave_id"],
+                ).single()
+                if (
+                    failed_wave is None
+                    or failed_wave["session_links"] != 1
+                    or failed_wave["status"] != "closed"
+                    or failed_wave["close_outcome"] != "session_failed"
+                    or failed_wave["session_failure_sha256"] != record_sha256
+                    or current.get("last_closed_wave_id") != record["wave_id"]
+                ):
+                    raise WaveStateError(
+                        "invalid_terminal_state",
+                        "failed session does not own its immutable closed failure wave",
+                    )
+            if (
+                record["failure_kind"] != failure_kind
+                or record["failure_detail_sha256"] != failure_detail_sha256
+            ):
+                raise SessionTerminalConflictError(
+                    "session already failed with a different immutable failure identity"
+                )
+            return {
+                "record": record,
+                "record_sha256": record_sha256,
+                "duplicate": True,
+            }
+
+        if current.get("status") != "open" or current.get("final") is not None:
+            raise WaveStateError(
+                "closed_session", f"session {session_id} is already terminal"
+            )
+        if len(open_wave_ids) > 1:
+            raise WaveStateError(
+                "invalid_terminal_state", "session has more than one open wave"
+            )
+        if open_wave_ids != ([active_wave_id] if active_wave_id is not None else []):
+            raise WaveStateError(
+                "invalid_terminal_state",
+                "session active-wave pointer differs from its open graph wave",
+            )
+        if open_wave_ids and current.get("coordination_mode") != "wave":
+            raise WaveStateError(
+                "coordination_mode_conflict",
+                "a non-wave session cannot own an open wave",
+            )
+
+        record = {
+            "contract": _SESSION_FAILURE_CONTRACT,
+            "session_id": session_id,
+            "failure_kind": failure_kind,
+            "failure_detail_sha256": failure_detail_sha256,
+            "wave_id": active_wave_id,
+        }
+        record_json = _canonical_json(record)
+        record_sha256 = _canonical_sha256(record)
+        now = time.time()
+        if active_wave_id is not None:
+            closed_wave = tx.run(
+                """MATCH (w:DCMWave {session_id:$sid, wave_id:$wid})
+                         -[:IN_SESSION]->(:DCMSession {session_id:$sid})
+                   WHERE w.status='open'
+                   SET w.status='closed', w.close_outcome='session_failed',
+                       w.session_failure_sha256=$failure_sha256,
+                       w.wave_tx_epoch=coalesce(w.wave_tx_epoch, 0) + 1,
+                       w.closed=$now
+                   RETURN w.wave_id AS wave_id""",
+                sid=session_id,
+                wid=active_wave_id,
+                failure_sha256=record_sha256,
+                now=now,
+            ).single()
+            if closed_wave is None:
+                raise WaveStateError(
+                    "invalid_terminal_state", "active wave changed before failure close"
+                )
+        updated = tx.run(
+            """MATCH (x:DCMSession {session_id:$sid})
+               WHERE x.status='open' AND x.final IS NULL
+               SET x.status='failed', x.active_wave_id=null,
+                   x.last_closed_wave_id=coalesce($failure_wave_id, x.last_closed_wave_id),
+                   x.failure_wave_id=$failure_wave_id,
+                   x.failure_kind=$failure_kind,
+                   x.failure_detail_sha256=$failure_detail_sha256,
+                   x.terminal_failure_json=$failure_json,
+                   x.terminal_failure_sha256=$failure_sha256,
+                   x.failed=$now, x.closed=$now
+               RETURN x.session_id AS session_id""",
+            sid=session_id,
+            failure_wave_id=active_wave_id,
+            failure_kind=failure_kind,
+            failure_detail_sha256=failure_detail_sha256,
+            failure_json=record_json,
+            failure_sha256=record_sha256,
+            now=now,
+        ).single()
+        if updated is None:
+            raise WaveStateError(
+                "closed_session", f"session {session_id} became terminal"
+            )
+        return {
+            "record": record,
+            "record_sha256": record_sha256,
+            "duplicate": False,
+        }
+
+    with _db().session(database=DCM_NEO4J_DATABASE) as session:
+        result = session.execute_write(terminalize)
+    return {
+        "session_id": session_id,
+        "status": "failed",
+        "failure_kind": result["record"]["failure_kind"],
+        "failure_detail_sha256": result["record"]["failure_detail_sha256"],
+        "failure_wave_id": result["record"]["wave_id"],
+        "terminal_failure_sha256": result["record_sha256"],
+        "duplicate": result["duplicate"],
+    }
+
+
 def publish_final(session_id: str, final: str) -> None:
     """Close the session only when the append-log concern projection is clear.
 
@@ -3522,11 +3750,16 @@ def publish_final(session_id: str, final: str) -> None:
     with _db().session(database=DCM_NEO4J_DATABASE) as session:
         mode_record = session.run(
             """MATCH (x:DCMSession {session_id:$sid})
-               RETURN x.coordination_mode AS coordination_mode""",
+               RETURN x.coordination_mode AS coordination_mode,
+                      x.status AS status, x.final AS final""",
             sid=session_id,
         ).single()
     if mode_record is None:
         raise ValueError(f"no DCM session {session_id}")
+    if mode_record["status"] != "open" or mode_record["final"] is not None:
+        raise WaveStateError(
+            "closed_session", f"session {session_id} is already terminal"
+        )
     coordination_mode = mode_record["coordination_mode"] or "linear"
     if coordination_mode == "wave":
         verification = verify_wave_coordination(session_id)

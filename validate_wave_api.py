@@ -1740,6 +1740,220 @@ try:
         "post-final linear write is structurally rejected", post_final_linear_rejected
     )
 
+    failed_session_id = mesh.start_session(
+        "SESSION FAILURE TERMINAL VALIDATION (throwaway)",
+        "scoped cleanup",
+        roles=["only"],
+    )
+    session_ids.append(failed_session_id)
+    failed_wave = mesh.open_wave(
+        failed_session_id,
+        round=1,
+        phase="independent",
+        prompt_id="failure-terminal",
+        prompt_revision=1,
+        prompt_messages=PROMPT_MESSAGES,
+        attachment_evidence_digests=[],
+        request_revision=1,
+        required_members=amended_members,
+    )
+    failed_identity, failed_request_id = reserve(
+        failed_session_id, failed_wave, "only", "taey-council-1"
+    )
+    claim(
+        failed_session_id,
+        failed_wave,
+        "only",
+        failed_identity,
+        failed_request_id,
+    )
+    failure_detail_sha256 = mesh._text_sha256(
+        "CouncilTransportFailure: production transaction stopped"
+    )
+    failure = mesh.fail_session(
+        failed_session_id,
+        failure_kind="coordinator_failure",
+        failure_detail_sha256=failure_detail_sha256,
+    )
+    failed_session = mesh.read_session(failed_session_id)
+    failed_wave = mesh.read_wave(failed_session_id, failed_wave["wave_id"])
+    with mesh._db().session(database=mesh.DCM_NEO4J_DATABASE) as graph:
+        terminal_shape = graph.run(
+            """MATCH (x:DCMSession {session_id:$sid})
+               OPTIONAL MATCH (w:DCMWave {session_id:$sid, status:'open'})
+               RETURN x.active_wave_id AS active_wave_id,
+                      count(w) AS open_wave_count""",
+            sid=failed_session_id,
+        ).single()
+    check(
+        "session failure atomically closes the active wave without rewriting its claim",
+        failed_session["status"] == "failed"
+        and failed_wave["status"] == "closed"
+        and failed_wave["close_outcome"] == "session_failed"
+        and failed_wave["slots"][0]["state"] == "claimed"
+        and failed_wave["session_failure_sha256"]
+        == failure["terminal_failure_sha256"]
+        and terminal_shape["active_wave_id"] is None
+        and terminal_shape["open_wave_count"] == 0,
+    )
+    with mesh._db().session(database=mesh.DCM_NEO4J_DATABASE) as graph:
+        terminal_before_replay = graph.run(
+            """MATCH (x:DCMSession {session_id:$sid})
+               MATCH (w:DCMWave {session_id:$sid, wave_id:$wid})
+               RETURN properties(x) AS session, properties(w) AS wave""",
+            sid=failed_session_id,
+            wid=failed_wave["wave_id"],
+        ).single()
+    terminal_before_replay = {
+        "session": dict(terminal_before_replay["session"]),
+        "wave": dict(terminal_before_replay["wave"]),
+    }
+    failure_replay = mesh.fail_session(
+        failed_session_id,
+        failure_kind="coordinator_failure",
+        failure_detail_sha256=failure_detail_sha256,
+    )
+    with mesh._db().session(database=mesh.DCM_NEO4J_DATABASE) as graph:
+        terminal_after_replay = graph.run(
+            """MATCH (x:DCMSession {session_id:$sid})
+               MATCH (w:DCMWave {session_id:$sid, wave_id:$wid})
+               RETURN properties(x) AS session, properties(w) AS wave""",
+            sid=failed_session_id,
+            wid=failed_wave["wave_id"],
+        ).single()
+    terminal_after_replay = {
+        "session": dict(terminal_after_replay["session"]),
+        "wave": dict(terminal_after_replay["wave"]),
+    }
+    check(
+        "exact session failure replay is idempotent and read-only",
+        failure_replay["duplicate"]
+        and failure_replay["terminal_failure_sha256"]
+        == failure["terminal_failure_sha256"]
+        and terminal_after_replay == terminal_before_replay,
+    )
+    conflicting_failure_rejected = False
+    try:
+        mesh.fail_session(
+            failed_session_id,
+            failure_kind="different_failure",
+            failure_detail_sha256=failure_detail_sha256,
+        )
+    except mesh.SessionTerminalConflictError:
+        conflicting_failure_rejected = True
+    check(
+        "a failed session rejects a conflicting terminal identity",
+        conflicting_failure_rejected,
+    )
+    post_failure_write_outcomes = []
+    for operation in (
+        lambda: contribute(
+            failed_session_id,
+            failed_wave,
+            "only",
+            failed_identity,
+            failed_request_id,
+            "must not land",
+        ),
+        lambda: mesh.record_wave_outcome(
+            failed_session_id,
+            failed_wave["wave_id"],
+            role="only",
+            request_revision=1,
+            request_id=failed_request_id,
+            terminal_outcome="dead_seat",
+            inference_performed=False,
+        ),
+        lambda: mesh.open_wave(
+            failed_session_id,
+            round=1,
+            phase="critique",
+            prompt_id="must-not-open",
+            prompt_revision=1,
+            prompt_messages=PROMPT_MESSAGES,
+            attachment_evidence_digests=[],
+            request_revision=1,
+            required_members=amended_members,
+            parent_wave_id=failed_wave["wave_id"],
+        ),
+        lambda: mesh.publish_final(failed_session_id, "must not publish"),
+        lambda: mesh.contribute(
+            failed_session_id,
+            "late-linear",
+            "must not land",
+            [],
+            read_version=0,
+        ),
+    ):
+        try:
+            operation()
+        except mesh.WaveStateError as error:
+            post_failure_write_outcomes.append(error.outcome)
+    with mesh._db().session(database=mesh.DCM_NEO4J_DATABASE) as graph:
+        terminal_after_rejections = graph.run(
+            """MATCH (x:DCMSession {session_id:$sid})
+               MATCH (w:DCMWave {session_id:$sid, wave_id:$wid})
+               RETURN properties(x) AS session, properties(w) AS wave""",
+            sid=failed_session_id,
+            wid=failed_wave["wave_id"],
+        ).single()
+    terminal_after_rejections = {
+        "session": dict(terminal_after_rejections["session"]),
+        "wave": dict(terminal_after_rejections["wave"]),
+    }
+    check(
+        "session failure structurally rejects every later linear and wave write",
+        post_failure_write_outcomes == ["closed_session"] * 5
+        and terminal_after_rejections == terminal_before_replay,
+    )
+
+    failure_race_session = mesh.start_session(
+        "SESSION FAILURE RACE VALIDATION (throwaway)",
+        "scoped cleanup",
+        roles=["only"],
+    )
+    session_ids.append(failure_race_session)
+    failure_race_wave = mesh.open_wave(
+        failure_race_session,
+        round=1,
+        phase="independent",
+        prompt_id="failure-race",
+        prompt_revision=1,
+        prompt_messages=PROMPT_MESSAGES,
+        attachment_evidence_digests=[],
+        request_revision=1,
+        required_members=amended_members,
+    )
+    failure_race_detail = mesh._text_sha256("same concurrent failure")
+    with cf.ThreadPoolExecutor(max_workers=16) as executor:
+        failure_race_results = list(
+            executor.map(
+                lambda _: mesh.fail_session(
+                    failure_race_session,
+                    failure_kind="coordinator_failure",
+                    failure_detail_sha256=failure_race_detail,
+                ),
+                range(16),
+            )
+        )
+    failure_race_wave = mesh.read_wave(
+        failure_race_session, failure_race_wave["wave_id"]
+    )
+    check(
+        "concurrent identical failures perform exactly one terminal transition",
+        sum(not result["duplicate"] for result in failure_race_results) == 1
+        and len(
+            {
+                result["terminal_failure_sha256"]
+                for result in failure_race_results
+            }
+        )
+        == 1
+        and failure_race_wave["session_status"] == "failed"
+        and failure_race_wave["status"] == "closed"
+        and failure_race_wave["active_wave_id"] is None,
+    )
+
     linear_session = mesh.start_session(
         "LINEAR MODE EXCLUSIVITY (throwaway)", "scoped cleanup", roles=["only"]
     )
