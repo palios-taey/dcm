@@ -182,7 +182,7 @@ Every contribution and transport receipt carries this immutable envelope:
     "sha256": "sha256:..."
   },
   "seat_id": "taey-council-1",
-  "role_id": "context-memory",
+  "role": "context-memory",
   "request_revision": 1,
   "request_id": "sha256:...",
   "emitter": {
@@ -222,7 +222,7 @@ with these named fields:
 ```text
 session_id, wave_id, round, phase
 prompt_id, prompt_revision, prompt_sha256
-seat_id, role_id, request_revision
+seat_id, role, request_revision
 parent_frontier_sha256
 expected process generation
 model endpoint, requested alias
@@ -242,10 +242,10 @@ After a successful graph commit, the envelope carries:
 {
   "receipt_kind": "contribution",
   "contribution": {
-    "contribution_id": "contrib_...",
+    "contrib_id": "contrib_...",
     "kind": "contribution",
     "content_sha256": "sha256:...",
-    "about_contribution_id": null,
+    "about": null,
     "severity": null,
     "veto": false,
     "disposition": null,
@@ -281,7 +281,7 @@ receipt cannot silently substitute the orchestrator graph at port `7689`. The ob
 may be `null` only on a coordinator-issued pre-claim refusal; such a receipt cannot carry a
 contribution ID or claim that inference occurred.
 
-Exactly one contribution occupies `(session_id, wave_id, role_id, request_revision)`. Redelivery of
+Exactly one contribution occupies `(session_id, wave_id, role, request_revision)`. Redelivery of
 an identical request returns the original contribution ID and receipt without another inference or
 write. The same identity with different canonical content is terminal `identity_conflict`.
 
@@ -298,7 +298,7 @@ One transport schema records both the non-terminal claim and the terminal acknow
   "claim_outcome": "claimed",
   "terminal_outcome": null,
   "inference_performed": false,
-  "contribution_id": null,
+  "contrib_id": null,
   "contribution_receipt_sha256": null,
   "original_request_id": null,
   "failure_stage": null,
@@ -313,7 +313,7 @@ endpoint, and model identity.
 
 `terminal_acknowledged` is emitted only after either the authoritative Neo4j contribution commits
 or a closed failure outcome is recorded. Only then may the delivery leave Redis pending state. On
-success it must carry the exact `contribution_id` and `contribution_receipt_sha256` verified from
+success it must carry the exact `contrib_id` and `contribution_receipt_sha256` verified from
 Neo4j.
 
 If graph commit succeeds but acknowledgement delivery fails, Neo4j remains authoritative. Recovery
@@ -368,7 +368,7 @@ session and preservation digest.
 
 ### Concern clearance and final publication
 
-A `resolution` names exactly one `concern` through `about_contribution_id` and preserves the public
+A `resolution` names exactly one `concern` through the existing `about` field and preserves the public
 DCM disposition rules. `FIX-VERIFIED` and `FALSE-POSITIVE` require a non-empty evidence reference,
 bound in the receipt as both `evidence_ref` and `evidence_ref_sha256`.
 
