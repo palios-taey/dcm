@@ -8,6 +8,14 @@
 # Shell entrypoints and CLIs:
 setup.sh
 
+# Agent and transport contracts:
+docs/**/*.md
+docs/*.md
+README.md
+SKILL.md
+AGENTS.md
+CLAUDE.md
+
 # CI/gate config itself (self-protecting — a PR weakening the gate is gated):
 .github/workflows/*.yml
 .github/r5-risky-paths

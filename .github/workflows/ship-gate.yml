@@ -1,7 +1,8 @@
 # Ship-gate CI — the merge gate required by main's branch protection (context: ship-gate-acceptance).
 #
 # Runs clean-checkout package installation, AI-native documentation coherence verification,
-# and exercises the real DCM substrate against an ephemeral Neo4j instance with scoped cleanup.
+# entrypoint verification from neutral directory, and exercises the real DCM substrate
+# against an ephemeral Neo4j instance with scoped cleanup.
 
 name: ship-gate
 
@@ -31,20 +32,28 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install package from clean checkout
-        run: pip install -e . -r requirements.txt
-      - name: Wait for Neo4j readiness
+        run: pip install . -r requirements.txt
+      - name: Verify installed entrypoints and imports from neutral directory
+        run: |
+          (cd /tmp && python3 -c "import mesh; from council_cli import main")
+          dcm-council --help
+          dcm-mesh --help
+      - name: Wait for Neo4j Bolt connectivity
         run: |
           python3 - <<'PY'
-          import socket, time, sys
-          deadline = time.time() + 60
-          while time.time() < deadline:
+          import time, sys
+          from neo4j import GraphDatabase
+          for i in range(60):
               try:
-                  with socket.create_connection(("127.0.0.1", 7687), timeout=2):
-                      print("Neo4j port 7687 is open and ready")
-                      sys.exit(0)
-              except OSError:
-                  time.sleep(1)
-          print("Timeout waiting for Neo4j port 7687", file=sys.stderr)
+                  d = GraphDatabase.driver("bolt://127.0.0.1:7687")
+                  d.verify_connectivity()
+                  d.close()
+                  print("neo4j ready and verified")
+                  sys.exit(0)
+              except Exception as e:
+                  print(f"waiting for neo4j: {e}")
+                  time.sleep(2)
+          print("neo4j did not become ready", file=sys.stderr)
           sys.exit(1)
           PY
       - name: Verify documentation coherence
