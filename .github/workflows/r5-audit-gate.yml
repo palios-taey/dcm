@@ -26,12 +26,14 @@ on:
   status: {}
 
 permissions:
+  checks: write
   contents: read
   statuses: write
   pull-requests: read
 
 jobs:
   gate:
+    name: r5-audit-visible
     runs-on: ubuntu-latest
     # Skip self-triggers: this workflow SETS the r5-audit-gate status, which is
     # itself a status event — without this guard it would loop forever. Only
@@ -56,6 +58,43 @@ jobs:
           else
             HEAD_SHA="${{ github.event.sha }}"
           fi
+
+          sync_visible_check() {  # state
+            if [ "${{ github.event_name }}" != "status" ]; then
+              return 0
+            fi
+            if ! check_runs="$(gh api \
+                 "repos/$REPO/commits/$HEAD_SHA/check-runs?check_name=r5-audit-visible&filter=latest&per_page=100")" ||
+               ! visible_checks="$(echo "$check_runs" | jq -c --arg head "$HEAD_SHA" \
+                 '[.check_runs[] | select(.name == "r5-audit-visible" and .head_sha == $head and .app.slug == "github-actions")]')" ||
+               ! visible_count="$(echo "$visible_checks" | jq 'length')"; then
+              echo "unable to resolve the PR-head visible check" >&2
+              return 1
+            fi
+            if [ "$visible_count" -ne 1 ]; then
+              echo "refusing visible-check update: expected one PR-head check, found $visible_count" >&2
+              return 1
+            fi
+            if ! visible_id="$(echo "$visible_checks" | jq -r '.[0].id')" ||
+               [[ ! "$visible_id" =~ ^[0-9]+$ ]]; then
+              echo "invalid PR-head visible check id" >&2
+              return 1
+            fi
+            if [ "$1" = "pending" ]; then
+              if ! gh api -X PATCH "repos/$REPO/check-runs/$visible_id" \
+                   -f status=in_progress >/dev/null; then
+                echo "unable to mark the PR-head visible check in progress" >&2
+                return 1
+              fi
+            else
+              if ! gh api -X PATCH "repos/$REPO/check-runs/$visible_id" \
+                   -f status=completed -f conclusion="$1" >/dev/null; then
+                echo "unable to complete the PR-head visible check" >&2
+                return 1
+              fi
+            fi
+            echo "r5-audit-visible -> $1 on $HEAD_SHA"
+          }
 
           set_status() {  # state, description
             if [[ ! "${PR_NUM:-}" =~ ^[0-9]+$ ]]; then
@@ -84,8 +123,19 @@ jobs:
               echo "refusing status write: bound PR changed for $HEAD_SHA" >&2
               return 1
             fi
-            gh api -X POST "repos/$REPO/statuses/$HEAD_SHA" \
-              -f state="$1" -f context="r5-audit-gate" -f description="$2" >/dev/null
+            if ! gh api -X POST "repos/$REPO/statuses/$HEAD_SHA" \
+                 -f state="$1" -f context="r5-audit-gate" -f description="$2" >/dev/null; then
+              echo "unable to write r5-audit-gate status" >&2
+              return 1
+            fi
+            if ! sync_visible_check "$1"; then
+              if ! gh api -X POST "repos/$REPO/statuses/$HEAD_SHA" \
+                   -f state=failure -f context="r5-audit-gate" \
+                   -f description="R5 gate error: visible check update failed" >/dev/null; then
+                echo "unable to fail r5-audit-gate after visible-check update failure" >&2
+              fi
+              return 1
+            fi
             echo "r5-audit-gate -> $1 ($2)"
           }
 
