@@ -1,0 +1,62 @@
+# Ship-gate CI — the merge gate required by main's branch protection (context: ship-gate-acceptance).
+#
+# Runs clean-checkout package installation, AI-native documentation coherence verification,
+# entrypoint verification from neutral directory, and exercises the real DCM substrate
+# against an ephemeral Neo4j instance with scoped cleanup.
+
+name: ship-gate
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main, "release/**"]
+  workflow_dispatch:
+
+jobs:
+  ship-gate-acceptance:           # <- required status-check context on main
+    runs-on: ubuntu-latest
+    services:
+      neo4j:
+        image: neo4j:5
+        env:
+          NEO4J_AUTH: none
+        ports:
+          - 7687:7687
+    env:
+      DCM_NEO4J_URI: bolt://127.0.0.1:7687
+      NEO4J_AUTH: none
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install package from clean checkout
+        run: pip install . -r requirements.txt
+      - name: Verify installed entrypoints and imports from neutral directory
+        run: |
+          (cd /tmp && python3 -c "import mesh; from council_cli import main")
+          dcm-council --help
+          dcm-mesh --help
+      - name: Wait for Neo4j Bolt connectivity
+        run: |
+          python3 - <<'PY'
+          import time, sys
+          from neo4j import GraphDatabase
+          for i in range(60):
+              try:
+                  d = GraphDatabase.driver("bolt://127.0.0.1:7687")
+                  d.verify_connectivity()
+                  d.close()
+                  print("neo4j ready and verified")
+                  sys.exit(0)
+              except Exception as e:
+                  print(f"waiting for neo4j: {e}")
+                  time.sleep(2)
+          print("neo4j did not become ready", file=sys.stderr)
+          sys.exit(1)
+          PY
+      - name: Verify documentation coherence
+        run: python3 docs_coherence_check.py
+      - name: Execute DCM substrate validation against Neo4j
+        run: python3 validate_substrate.py
