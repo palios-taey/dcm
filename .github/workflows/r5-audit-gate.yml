@@ -81,11 +81,17 @@ jobs:
               return 1
             fi
             if [ "$1" = "pending" ]; then
-              gh api -X PATCH "repos/$REPO/check-runs/$visible_id" \
-                -f status=in_progress >/dev/null
+              if ! gh api -X PATCH "repos/$REPO/check-runs/$visible_id" \
+                   -f status=in_progress >/dev/null; then
+                echo "unable to mark the PR-head visible check in progress" >&2
+                return 1
+              fi
             else
-              gh api -X PATCH "repos/$REPO/check-runs/$visible_id" \
-                -f status=completed -f conclusion="$1" >/dev/null
+              if ! gh api -X PATCH "repos/$REPO/check-runs/$visible_id" \
+                   -f status=completed -f conclusion="$1" >/dev/null; then
+                echo "unable to complete the PR-head visible check" >&2
+                return 1
+              fi
             fi
             echo "r5-audit-visible -> $1 on $HEAD_SHA"
           }
