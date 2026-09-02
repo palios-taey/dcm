@@ -93,6 +93,8 @@ _WAVE_FAILURE_OUTCOMES = {
     "generation_mismatch",
     "model_identity_unproven",
 }
+_REQUEST_CONTRACT_V2 = "taey-native-dcm-request/v2"
+_RECEIPT_CONTRACT_V2 = "taey-native-dcm-receipt/v2"
 _REQUEST_IDENTITY_FIELDS = {
     "session_id",
     "wave_id",
@@ -112,6 +114,11 @@ _REQUEST_IDENTITY_FIELDS = {
     "model_content_sha256",
     "serving_container_digest",
 }
+_REQUEST_IDENTITY_V2_FIELDS = _REQUEST_IDENTITY_FIELDS | {
+    "request_contract",
+    "prompt_contract_sha256",
+    "model_identity_receipt_sha256",
+}
 _OBSERVED_EXECUTION_FIELDS = {
     "process_generation_observed",
     "model_endpoint",
@@ -121,6 +128,10 @@ _OBSERVED_EXECUTION_FIELDS = {
     "serving_container_digest",
 }
 _CLAIM_OBSERVATION_FIELDS = _OBSERVED_EXECUTION_FIELDS | {"seat_id"}
+_CLAIM_OBSERVATION_V2_FIELDS = _CLAIM_OBSERVATION_FIELDS | {
+    "prompt_contract_sha256",
+    "model_identity_receipt_sha256",
+}
 _EMITTER_FIELDS = {"component", "process_generation"}
 _driver_init_lock = threading.Lock()
 _SCHEMA_STATEMENTS = (
@@ -307,14 +318,32 @@ def _ensure_wave_schema():
     return _db()
 
 
+def _validated_request_contract(request_contract: str | None) -> str | None:
+    if request_contract is None:
+        return None
+    if request_contract != _REQUEST_CONTRACT_V2:
+        raise ValueError(
+            f"request_contract must be {_REQUEST_CONTRACT_V2!r} when provided"
+        )
+    return request_contract
+
+
 def canonical_wave_request_id(request_identity: dict) -> str:
     """Return the normative request identity digest after validating the frozen field set."""
     if not isinstance(request_identity, dict):
         raise ValueError("request_identity must be a dict")
+    request_contract = _validated_request_contract(
+        request_identity.get("request_contract")
+    )
+    expected_fields = (
+        _REQUEST_IDENTITY_V2_FIELDS
+        if request_contract == _REQUEST_CONTRACT_V2
+        else _REQUEST_IDENTITY_FIELDS
+    )
     fields = set(request_identity)
-    if fields != _REQUEST_IDENTITY_FIELDS:
-        missing = sorted(_REQUEST_IDENTITY_FIELDS - fields)
-        extra = sorted(fields - _REQUEST_IDENTITY_FIELDS)
+    if fields != expected_fields:
+        missing = sorted(expected_fields - fields)
+        extra = sorted(fields - expected_fields)
         raise ValueError(
             f"request_identity fields mismatch; missing={missing}, extra={extra}"
         )
@@ -340,6 +369,12 @@ def canonical_wave_request_id(request_identity: dict) -> str:
         "serving_container_digest",
     ):
         _require_sha256(request_identity[field], field)
+    if request_contract == _REQUEST_CONTRACT_V2:
+        for field in (
+            "prompt_contract_sha256",
+            "model_identity_receipt_sha256",
+        ):
+            _require_sha256(request_identity[field], field)
     return _canonical_sha256(request_identity)
 
 
@@ -366,7 +401,17 @@ def _validated_request_identity(*, wave: dict, slot: dict) -> dict:
         "role": slot["role"],
         "request_revision": slot["request_revision"],
         "parent_frontier_sha256": wave["parent_frontier_sha256"],
+        "request_contract": wave.get("request_contract"),
     }
+    if wave.get("request_contract") == _REQUEST_CONTRACT_V2:
+        graph_fields.update(
+            {
+                "prompt_contract_sha256": slot.get("prompt_contract_sha256"),
+                "model_identity_receipt_sha256": slot.get(
+                    "model_identity_receipt_sha256"
+                ),
+            }
+        )
     mismatched = [
         field
         for field, expected in graph_fields.items()
@@ -417,21 +462,39 @@ def canonical_prompt_sha256(
     )
 
 
-def _canonical_members(required_members: list[dict]) -> list[dict]:
+def _canonical_members(
+    required_members: list[dict], *, request_contract: str | None = None
+) -> list[dict]:
+    request_contract = _validated_request_contract(request_contract)
     if not isinstance(required_members, list) or not required_members:
         raise ValueError("required_members must be a non-empty list")
+    required_fields = {"seat_id", "role"}
+    if request_contract == _REQUEST_CONTRACT_V2:
+        required_fields |= {
+            "prompt_contract_sha256",
+            "model_identity_receipt_sha256",
+        }
     members = []
     for member in required_members:
-        if not isinstance(member, dict) or set(member) != {"seat_id", "role"}:
+        if not isinstance(member, dict) or set(member) != required_fields:
             raise ValueError(
-                "each required member must contain exactly seat_id and role"
+                f"each required member must contain exactly {sorted(required_fields)}"
             )
-        members.append(
-            {
-                "seat_id": _require_text(member["seat_id"], "seat_id"),
-                "role": _require_text(member["role"], "role"),
-            }
-        )
+        normalized = {
+            "seat_id": _require_text(member["seat_id"], "seat_id"),
+            "role": _require_text(member["role"], "role"),
+        }
+        if request_contract == _REQUEST_CONTRACT_V2:
+            normalized.update(
+                {
+                    field: _require_sha256(member[field], field)
+                    for field in (
+                        "prompt_contract_sha256",
+                        "model_identity_receipt_sha256",
+                    )
+                }
+            )
+        members.append(normalized)
     if len({member["seat_id"] for member in members}) != len(members):
         raise ValueError("required_members cannot repeat a seat_id")
     if len({member["role"] for member in members}) != len(members):
@@ -439,16 +502,35 @@ def _canonical_members(required_members: list[dict]) -> list[dict]:
     return sorted(members, key=lambda member: member["role"])
 
 
+def _slot_member(slot: dict, request_contract: str | None) -> dict:
+    member = {"seat_id": slot["seat_id"], "role": slot["role"]}
+    if request_contract == _REQUEST_CONTRACT_V2:
+        member.update(
+            {
+                "prompt_contract_sha256": slot.get("prompt_contract_sha256"),
+                "model_identity_receipt_sha256": slot.get(
+                    "model_identity_receipt_sha256"
+                ),
+            }
+        )
+    return member
+
+
 def _validated_claim_observation(
     claim_observation: dict, request_identity: dict
 ) -> dict:
+    expected_fields = (
+        _CLAIM_OBSERVATION_V2_FIELDS
+        if request_identity.get("request_contract") == _REQUEST_CONTRACT_V2
+        else _CLAIM_OBSERVATION_FIELDS
+    )
     if (
         not isinstance(claim_observation, dict)
-        or set(claim_observation) != _CLAIM_OBSERVATION_FIELDS
+        or set(claim_observation) != expected_fields
     ):
         raise WaveStateError(
             "model_identity_unproven",
-            f"claim_observation fields must be exactly {sorted(_CLAIM_OBSERVATION_FIELDS)}",
+            f"claim_observation fields must be exactly {sorted(expected_fields)}",
         )
     if claim_observation["seat_id"] != request_identity["seat_id"]:
         raise WaveIdentityConflictError(
@@ -456,6 +538,26 @@ def _validated_claim_observation(
         )
     observed = {field: claim_observation[field] for field in _OBSERVED_EXECUTION_FIELDS}
     _validated_observed_execution(observed, request_identity)
+    if request_identity.get("request_contract") == _REQUEST_CONTRACT_V2:
+        digest_fields = (
+            "prompt_contract_sha256",
+            "model_identity_receipt_sha256",
+        )
+        try:
+            for field in digest_fields:
+                _require_sha256(claim_observation[field], field)
+        except ValueError as exc:
+            raise WaveStateError("model_identity_unproven", str(exc)) from exc
+        mismatched = [
+            field
+            for field in digest_fields
+            if claim_observation[field] != request_identity[field]
+        ]
+        if mismatched:
+            raise WaveStateError(
+                "model_identity_unproven",
+                f"observed contract identity differs from frozen request: {mismatched}",
+            )
     return dict(claim_observation)
 
 
@@ -553,6 +655,19 @@ def _build_contribution_receipt(
         },
         "terminal_outcome": "contributed",
     }
+    if request_identity.get("request_contract") == _REQUEST_CONTRACT_V2:
+        receipt.update(
+            {
+                "contract": _RECEIPT_CONTRACT_V2,
+                "request_contract": _REQUEST_CONTRACT_V2,
+                "prompt_contract_sha256": request_identity[
+                    "prompt_contract_sha256"
+                ],
+                "model_identity_receipt_sha256": request_identity[
+                    "model_identity_receipt_sha256"
+                ],
+            }
+        )
     receipt["receipt_sha256"] = _canonical_sha256(receipt)
     return receipt
 
@@ -1284,6 +1399,7 @@ def open_wave(
     attachment_evidence_digests: list[str],
     request_revision: int,
     required_members: list[dict],
+    request_contract: str | None = None,
     parent_wave_id: str | None = None,
 ) -> dict:
     """Open one role-complete wave whose parent frontier is derived from the graph.
@@ -1303,7 +1419,10 @@ def open_wave(
         prompt_messages, attachment_evidence_digests
     )
     request_revision = _require_positive_int(request_revision, "request_revision")
-    members = _canonical_members(required_members)
+    request_contract = _validated_request_contract(request_contract)
+    members = _canonical_members(
+        required_members, request_contract=request_contract
+    )
     roles = [member["role"] for member in members]
     members_json = _canonical_json(members)
     membership_sha256 = _canonical_sha256(members)
@@ -1408,6 +1527,7 @@ def open_wave(
                           p.prompt_revision AS prompt_revision,
                           p.required_members_json AS required_members_json,
                           p.membership_sha256 AS membership_sha256,
+                          p.request_contract AS request_contract,
                           p.superseded_by_prompt_revision AS superseded_by_prompt_revision""",
                 sid=session_id,
                 parent_wave_id=parent_wave_id,
@@ -1424,9 +1544,10 @@ def open_wave(
             if (
                 parent["membership_sha256"] != membership_sha256
                 or parent["required_members_json"] != members_json
+                or parent["request_contract"] != request_contract
             ):
                 raise WaveIdentityConflictError(
-                    "wave seat/role membership differs from its predecessor"
+                    "wave request contract or membership differs from its predecessor"
                 )
             critique_transition = (
                 parent["close_outcome"] == "complete"
@@ -1501,12 +1622,15 @@ def open_wave(
                 else "prompt_amendment"
             ),
         }
+        if request_contract == _REQUEST_CONTRACT_V2:
+            identity["request_contract"] = request_contract
         wave_fingerprint = _canonical_sha256(identity)
         tx.run(
             """MATCH (x:DCMSession {session_id:$sid})
                CREATE (w:DCMWave {wave_id:$wid, session_id:$sid, round:$round,
                        phase:$phase, prompt_id:$prompt_id, prompt_revision:$prompt_revision,
                        prompt_sha256:$prompt_sha256, request_revision:$request_revision,
+                       request_contract:$request_contract,
                        graph_uri:$graph_uri, graph_database:$graph_database,
                        prompt_messages_json:$prompt_messages_json,
                        attachment_evidence_digests:$attachment_evidence_digests,
@@ -1530,6 +1654,7 @@ def open_wave(
             prompt_revision=prompt_revision,
             prompt_sha256=prompt_sha256,
             request_revision=request_revision,
+            request_contract=request_contract,
             graph_uri=DCM_NEO4J_URI,
             graph_database=DCM_NEO4J_DATABASE,
             prompt_messages_json=_canonical_json(prompt_messages),
@@ -1558,6 +1683,8 @@ def open_wave(
                UNWIND $members AS member
                CREATE (z:DCMWaveSlot {session_id:$sid, wave_id:$wid, round:$round,
                        role:member.role, seat_id:member.seat_id,
+                       prompt_contract_sha256:member.prompt_contract_sha256,
+                       model_identity_receipt_sha256:member.model_identity_receipt_sha256,
                        request_revision:$request_revision, state:'pending',
                        created:$now, updated:$now})
                CREATE (z)-[:IN_WAVE]->(w)""",
@@ -1599,6 +1726,8 @@ def open_wave(
             "parent_frontier_sha256": existing["parent_frontier_sha256"],
             "transition": existing["transition"],
         }
+        if existing.get("request_contract") is not None:
+            existing_identity["request_contract"] = existing["request_contract"]
         requested_identity = dict(existing_identity)
         requested_identity.update(
             {
@@ -1609,6 +1738,10 @@ def open_wave(
                 "parent_wave_id": parent_wave_id,
             }
         )
+        if request_contract is None:
+            requested_identity.pop("request_contract", None)
+        else:
+            requested_identity["request_contract"] = request_contract
         if existing["wave_fingerprint"] != _canonical_sha256(requested_identity):
             raise WaveIdentityConflictError(
                 "the logical wave identity already exists with different immutable fields"
@@ -1707,11 +1840,21 @@ def reserve_wave_request(
             "role": role,
             "request_revision": request_revision,
             "parent_frontier_sha256": wave["parent_frontier_sha256"],
+            "request_contract": wave.get("request_contract"),
         }
+        if wave.get("request_contract") == _REQUEST_CONTRACT_V2:
+            graph_fields.update(
+                {
+                    "prompt_contract_sha256": slot.get("prompt_contract_sha256"),
+                    "model_identity_receipt_sha256": slot.get(
+                        "model_identity_receipt_sha256"
+                    ),
+                }
+            )
         mismatched = [
             field
             for field, expected in graph_fields.items()
-            if request_identity[field] != expected
+            if request_identity.get(field) != expected
         ]
         if mismatched:
             raise WaveIdentityConflictError(
@@ -2635,7 +2778,10 @@ def close_wave(
             )
         required_members = json.loads(wave["required_members_json"])
         observed_members = sorted(
-            ({"seat_id": slot["seat_id"], "role": slot["role"]} for slot in slots),
+            (
+                _slot_member(slot, wave.get("request_contract"))
+                for slot in slots
+            ),
             key=lambda member: member["role"],
         )
         if observed_members != required_members:
@@ -2969,7 +3115,7 @@ def verify_wave_coordination(session_id: str, wave_id: str | None = None) -> dic
         )
     observed_members = sorted(
         (
-            {"seat_id": slots[0]["seat_id"], "role": role}
+            _slot_member(slots[0], wave.get("request_contract"))
             for role, slots in slots_by_role.items()
             if len(slots) == 1
         ),
@@ -3137,9 +3283,10 @@ def verify_wave_coordination(session_id: str, wave_id: str | None = None) -> dic
             if (
                 parent["required_members_json"] != wave["required_members_json"]
                 or parent["membership_sha256"] != wave["membership_sha256"]
+                or parent.get("request_contract") != wave.get("request_contract")
             ):
                 sequential_parent_violations.append(
-                    "seat/role membership changed across waves"
+                    "request contract or membership changed across waves"
                 )
             critique_transition = (
                 wave.get("transition") == "critique"

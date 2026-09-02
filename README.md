@@ -86,6 +86,8 @@ the void and silently work alone**, then report success. DCM's mechanisms, state
   accounts for a superseded prompt revision; `verify_wave_coordination()` audits every sibling
   against the exact graph-derived parent set. `publish_final()` accepts exactly one complete
   critique frontier and then makes both linear and wave writes structurally impossible.
+  Explicit taey-native-dcm-request/v2 waves additionally bind each slot's complete prompt-contract
+  digest and external model-identity-receipt digest without changing implicit v1 waves.
 
 **What DCM does NOT claim:** that coordination "cannot be faked" in the absolute. Semantic
 incorporation is the agent's asserted good faith, backed by the structural guarantee that the
