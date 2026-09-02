@@ -3,7 +3,7 @@
 AI-native: docs are current AT ALL TIMES, enforced by a gate, not willpower. Run on change / pre-merge.
 Checks the operating guide's load-bearing claims against reality; exits non-zero + names each drift.
 """
-import os, re, sys
+import json, os, re, sys
 ROOT = os.path.dirname(os.path.abspath(__file__))
 def rd(p):
     fp = os.path.join(ROOT, p)
@@ -53,6 +53,43 @@ if re.search(r"(?m)^SKILL\.md$", gi): fail.append("SKILL.md is gitignored — th
 if skill is not None and subprocess.run(["git", "-C", ROOT, "ls-files", "--error-unmatch", "SKILL.md"],
                                         capture_output=True).returncode != 0:
     fail.append("SKILL.md is untracked — every doc is a committed public artifact")
+# 8b. The Taey-native v2 digest must name the complete public prompt contract, not a reduced surrogate.
+transport = rd("docs/TAEY_NATIVE_TRANSPORT.md") or ""
+prompt_source_match = re.search(
+    r'```json\n(\{\n  "contract": "taey-council-prompt-contract/v2".*?\n\})\n```',
+    transport,
+    re.S,
+)
+if prompt_source_match is None:
+    fail.append("TAEY_NATIVE_TRANSPORT.md is missing the exact taey-council-prompt-contract/v2 source object")
+else:
+    try:
+        prompt_source = json.loads(prompt_source_match.group(1))
+    except json.JSONDecodeError as e:
+        fail.append(f"TAEY_NATIVE_TRANSPORT.md prompt contract is not valid JSON: {e}")
+    else:
+        expected_prompt_fields = {
+            "contract", "manifest", "seat", "static_prompt_sources",
+            "system_message", "response_format_template", "request_renderer",
+        }
+        if set(prompt_source) != expected_prompt_fields:
+            fail.append(
+                "TAEY_NATIVE_TRANSPORT.md prompt contract fields drifted: "
+                f"expected {sorted(expected_prompt_fields)}, got {sorted(prompt_source)}"
+            )
+        sources = prompt_source.get("static_prompt_sources", [])
+        if len(sources) != 8:
+            fail.append(f"TAEY_NATIVE_TRANSPORT.md must bind exactly eight static prompt sources, got {len(sources)}")
+        elif [source.get("source_kind") for source in sources] != ["role"] * 7 + ["shared"]:
+            fail.append("TAEY_NATIVE_TRANSPORT.md prompt sources must be seven ordered roles plus the final shared source")
+        renderer = prompt_source.get("request_renderer", {})
+        if renderer != {
+            "contract": "openai-chat-completions-request/v1",
+            "message_order": ["system", "user"],
+            "chat_template_kwargs": {"enable_thinking": False},
+            "attachments": {"state": "none", "items": []},
+        }:
+            fail.append("TAEY_NATIVE_TRANSPORT.md request renderer drifted from the public v2 prompt contract")
 # 9. README.md (the public front door) must exist, name real .py files, point at the invocation,
 #    and NOT carry the reverted sandbox claim (we run full-access; "sandbox before seating" was wrong)
 readme = rd("README.md")
