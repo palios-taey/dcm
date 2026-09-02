@@ -303,6 +303,62 @@ def _acknowledge_terminal(
     return receipt
 
 
+def recover_wave_request(
+    request: dict,
+    *,
+    acknowledge: Callable[[dict], None],
+    emitter_process_generation: str,
+    terminal_outcome: str,
+    inference_performed: bool,
+    failure_stage: str,
+    failure_detail: str,
+    emitter_component: str = "taey-council-seat",
+    duplicate_dispatch: bool = True,
+) -> dict:
+    """Close or re-ack one abandoned delivery without authorizing inference."""
+    if not callable(acknowledge):
+        raise ValueError("acknowledge must be callable")
+    if not isinstance(emitter_process_generation, str) or not (
+        emitter_process_generation.strip()
+    ):
+        raise ValueError("emitter_process_generation must be a non-empty string")
+    session_id = _required_delivery_text(request, "dcm_session_id")
+    wave_id = _required_delivery_text(request, "wave_id")
+    wave = mesh.read_wave(session_id, wave_id)
+    slot, parents = _validated_wave_delivery(request, wave)
+    if slot["state"] in {"contributed", "failed", "missing", "cancelled", "superseded"}:
+        terminal = mesh.claim_wave_request(
+            session_id,
+            wave_id,
+            role=slot["role"],
+            request_revision=slot["request_revision"],
+            request_id=slot["request_id"],
+            parent_contribution_ids=parents,
+            claim_observation={},
+        )
+    else:
+        terminal = mesh.record_wave_outcome(
+            session_id,
+            wave_id,
+            role=slot["role"],
+            request_revision=slot["request_revision"],
+            request_id=slot["request_id"],
+            terminal_outcome=terminal_outcome,
+            inference_performed=inference_performed,
+            failure_stage=failure_stage,
+            failure_detail_sha256=_text_sha256(failure_detail),
+        )
+    receipt = _acknowledge_terminal(
+        request,
+        terminal,
+        acknowledge,
+        emitter_component=emitter_component,
+        emitter_process_generation=emitter_process_generation,
+        duplicate_dispatch=duplicate_dispatch,
+    )
+    return {"graph": terminal, "transport_receipt": receipt}
+
+
 def execute_wave_request(
     request: dict,
     claim_observation: dict,
