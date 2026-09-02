@@ -56,9 +56,14 @@ port `7689` remains a separate state owner. No component may select between them
 
 ## Current committed call flow
 
-At public DCM commit `3dd65612c2c628a0c72021ffa07f2f1a474d3f72`:
+The public DCM package provides these state transitions:
 
-1. `mesh.start_session()` creates one open `DCMSession`.
+1. `mesh.start_session()` creates one open `DCMSession`. Existing callers omit `session_id` and
+   retain the generated `dcm_<12 lowercase hex>` identity. A Presence adapter may explicitly pass
+   its already-created round identity as the session identity; the accepted source format is
+   exactly `dcm-YYYYMMDDTHHMMSSZ-<12 lowercase hex>`, matching public Presence
+   `NativeCouncilTransport._new_round_id()` at commit
+   `04db75960b6a8a1eef4f2231779bd9738f7873f5`.
 2. `mesh.read_session()` returns all contributions and a linear version.
 3. `mesh.contribute()` writes one `DCMContribution` into the unique `(session_id, seq)` slot.
 4. `mesh.publish_final()` closes the session after the typed-concern projection clears.
@@ -221,11 +226,29 @@ Every contribution and transport receipt carries this immutable envelope:
 }
 ```
 
-For the first adapter, `correlation_id` and `session_id` are identical. A future translation requires
-a new contract version; no runtime may infer one. `prompt.sha256` hashes the canonical ordered model
-message list plus the ordered attachment/evidence content digests. `parent_frontier_sha256` hashes
-the canonical sorted `parent_contribution_ids` array. `request_id` hashes a canonical JSON object
-with these named fields:
+For the first adapter, the Presence `round_id`, `correlation_id`, and DCM `session_id` are one exact
+identity. `start_session(..., session_id=round_id)` neither normalizes nor translates it. A malformed
+identity is rejected before graph creation; an existing identity is rejected with an instruction to
+read/resume the existing session, never create a duplicate. Existing callers that omit `session_id`
+retain their generated legacy identity. A future translation requires a new contract version; no
+runtime may infer one. `SessionIdentityValidationError.reason` distinguishes `invalid_format` from
+`invalid_calendar`; uniqueness collisions raise the separate `SessionIdentityConflictError`. Both
+remain `ValueError` subclasses for existing broad exception handling.
+
+For explicit v2 waves, `prompt.sha256` binds only the shared ordered request/evidence material common
+to every seat. Its canonical source object is:
+
+```json
+{
+  "messages": ["<ordered shared model-message objects>"],
+  "attachment_evidence_content_digests": ["<ordered sha256 digests>"]
+}
+```
+
+Per-seat system messages are excluded from this shared object. DCM computes the digest from the exact
+`prompt_messages` and `attachment_evidence_digests` supplied to `open_wave()` and stores both sources
+with the wave. `parent_frontier_sha256` hashes the canonical sorted
+`parent_contribution_ids` array. `request_id` hashes a canonical JSON object with these named fields:
 
 ```text
 session_id, wave_id, round, phase
@@ -259,10 +282,29 @@ seat_id, role, prompt_contract_sha256, model_identity_receipt_sha256
 ```
 
 The member object is included in the immutable membership digest and copied to its graph role slot.
-`prompt_contract_sha256` names the complete Presence seat prompt contract for that role;
-`model_identity_receipt_sha256` names the external model-identity receipt selected for that seat.
-Both use the canonical `sha256:<64 lowercase hex>` encoding. DCM binds these opaque digests; it does
-not generate either source object or claim that digest equality verifies the object's contents.
+`prompt_contract_sha256` names this exact canonical source object for that role:
+
+```json
+{
+  "role": "<exact DCM role>",
+  "system_message": "<exact fully rendered per-seat system message delivered to the seat>",
+  "renderer_revision": "<immutable revision of the deterministic renderer/template>",
+  "response_contract_revision": "<immutable revision of the structured response contract>"
+}
+```
+
+The `system_message` value is the complete rendered seat input, including stable seat/role identity,
+shared prompt bytes, and role prompt bytes; it does not mean the role-prompt file alone. The source is
+canonical JSON encoded as UTF-8 with sorted keys, no insignificant whitespace, Unicode preserved, and
+non-finite numbers rejected. The Presence producer owns that source object and its digest.
+`model_identity_receipt_sha256` names the external model-identity receipt selected for that seat. Both
+use the canonical `sha256:<64 lowercase hex>` encoding. DCM binds these opaque digests; it does not
+generate or authenticate either source object and does not claim that digest syntax or equality
+proves the producer, source contents, or serving identity. The current Presence digest producer reads
+environment-selected prompt paths and carries no independently re-derivable public commit/blob
+provenance, so it does not yet satisfy this source boundary. Production v2 selection remains blocked
+until a public Presence producer and independent verifier establish those properties for every
+manifest-derived seat.
 
 A v2 request identity contains exactly the v1 request-identity fields plus:
 

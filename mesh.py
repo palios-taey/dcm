@@ -44,6 +44,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import threading
 import time
 import uuid
@@ -95,6 +96,9 @@ _WAVE_FAILURE_OUTCOMES = {
 }
 _REQUEST_CONTRACT_V2 = "taey-native-dcm-request/v2"
 _RECEIPT_CONTRACT_V2 = "taey-native-dcm-receipt/v2"
+_PRESENCE_ROUND_SESSION_ID_RE = re.compile(
+    r"^dcm-[0-9]{8}T(?:[01][0-9]|2[0-3])(?:[0-5][0-9]){2}Z-[0-9a-f]{12}$"
+)
 _REQUEST_IDENTITY_FIELDS = {
     "session_id",
     "wave_id",
@@ -207,6 +211,18 @@ class WaveIdentityConflictError(WaveStateError):
         super().__init__("identity_conflict", detail)
 
 
+class SessionIdentityValidationError(ValueError):
+    """Raised when a caller-supplied Presence round identity is not canonical."""
+
+    def __init__(self, reason: str, detail: str):
+        self.reason = reason
+        super().__init__(detail)
+
+
+class SessionIdentityConflictError(ValueError):
+    """Raised when a caller tries to create an external session that already exists."""
+
+
 class WaveFrontierMismatchError(WaveStateError):
     """Raised when a request does not carry its wave's exact immutable parent frontier."""
 
@@ -311,6 +327,26 @@ def _require_sha256(value, field: str) -> str:
         raise ValueError(f"{field} must be sha256:<64 lowercase hex>") from exc
     if value[7:] != value[7:].lower():
         raise ValueError(f"{field} must be sha256:<64 lowercase hex>")
+    return value
+
+
+def _validated_presence_round_session_id(value) -> str:
+    if (
+        not isinstance(value, str)
+        or _PRESENCE_ROUND_SESSION_ID_RE.fullmatch(value) is None
+    ):
+        raise SessionIdentityValidationError(
+            "invalid_format",
+            "session_id must match the Presence round identity "
+            "dcm-YYYYMMDDTHHMMSSZ-<12 lowercase hex>",
+        )
+    try:
+        time.strptime(value[4:20], "%Y%m%dT%H%M%SZ")
+    except ValueError as exc:
+        raise SessionIdentityValidationError(
+            "invalid_calendar",
+            "session_id must contain a valid UTC timestamp in the Presence round identity",
+        ) from exc
     return value
 
 
@@ -1129,19 +1165,39 @@ def _build_clearance_projection(contributions: list[dict]) -> dict:
     }
 
 
-def start_session(topic: str, payload: str, roles: list[str] | None = None) -> str:
-    """Open a coordination session. payload = the artifact under work (e.g. a draft response)."""
-    sid = f"dcm_{uuid.uuid4().hex[:12]}"
-    with _db().session(database=DCM_NEO4J_DATABASE) as s:
-        s.run(
-            """CREATE (x:DCMSession {session_id:$sid, topic:$topic, payload:$payload,
-                 roles:$roles, status:'open', created:$ts})""",
-            sid=sid,
-            topic=topic,
-            payload=payload,
-            roles=roles or [],
-            ts=time.time(),
-        )
+def start_session(
+    topic: str,
+    payload: str,
+    roles: list[str] | None = None,
+    *,
+    session_id: str | None = None,
+) -> str:
+    """Open a session, optionally reusing one exact fresh Presence round identity."""
+    external_identity = session_id is not None
+    sid = (
+        _validated_presence_round_session_id(session_id)
+        if external_identity
+        else f"dcm_{uuid.uuid4().hex[:12]}"
+    )
+    try:
+        with _db().session(database=DCM_NEO4J_DATABASE) as s:
+            result = s.run(
+                """CREATE (x:DCMSession {session_id:$sid, topic:$topic, payload:$payload,
+                     roles:$roles, status:'open', created:$ts})""",
+                sid=sid,
+                topic=topic,
+                payload=payload,
+                roles=roles or [],
+                ts=time.time(),
+            )
+            if external_identity:
+                result.consume()
+    except ConstraintError as exc:
+        if not external_identity:
+            raise
+        raise SessionIdentityConflictError(
+            f"DCM session {sid} already exists; recovery must use read_session()"
+        ) from exc
     return sid
 
 
