@@ -383,7 +383,7 @@ try:
         roles=["v2-role"],
     )
     session_ids.append(v2_session)
-    implicit_v2_membership_rejected = False
+    implicit_v2_membership_error = None
     try:
         mesh.open_wave(
             v2_session,
@@ -396,11 +396,12 @@ try:
             request_revision=1,
             required_members=V2_MEMBERS,
         )
-    except ValueError:
-        implicit_v2_membership_rejected = True
+    except ValueError as error:
+        implicit_v2_membership_error = str(error)
     check(
         "v2 member fields require the explicit v2 request contract",
-        implicit_v2_membership_rejected,
+        implicit_v2_membership_error
+        == "each required member must contain exactly seat_id and role",
     )
     v2_wave = mesh.open_wave(
         v2_session,

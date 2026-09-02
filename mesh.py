@@ -477,6 +477,10 @@ def _canonical_members(
     members = []
     for member in required_members:
         if not isinstance(member, dict) or set(member) != required_fields:
+            if request_contract is None:
+                raise ValueError(
+                    "each required member must contain exactly seat_id and role"
+                )
             raise ValueError(
                 f"each required member must contain exactly {sorted(required_fields)}"
             )
