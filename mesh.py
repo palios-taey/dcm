@@ -44,6 +44,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import threading
 import time
 import uuid
 from urllib.parse import urlparse
@@ -121,7 +122,33 @@ _OBSERVED_EXECUTION_FIELDS = {
 }
 _CLAIM_OBSERVATION_FIELDS = _OBSERVED_EXECUTION_FIELDS | {"seat_id"}
 _EMITTER_FIELDS = {"component", "process_generation"}
-_wave_schema_ready = False
+_driver_init_lock = threading.Lock()
+_SCHEMA_STATEMENTS = (
+    "CREATE CONSTRAINT dcm_session_id IF NOT EXISTS "
+    "FOR (x:DCMSession) REQUIRE x.session_id IS UNIQUE",
+    "CREATE CONSTRAINT dcm_contrib_id IF NOT EXISTS "
+    "FOR (c:DCMContribution) REQUIRE c.contrib_id IS UNIQUE",
+    "CREATE CONSTRAINT dcm_contrib_slot IF NOT EXISTS "
+    "FOR (c:DCMContribution) REQUIRE (c.session_id, c.seq) IS UNIQUE",
+    "CREATE CONSTRAINT dcm_wave_id IF NOT EXISTS "
+    "FOR (w:DCMWave) REQUIRE w.wave_id IS UNIQUE",
+    "CREATE CONSTRAINT dcm_wave_logical_identity IF NOT EXISTS "
+    "FOR (w:DCMWave) REQUIRE "
+    "(w.session_id, w.round, w.phase, w.prompt_revision, w.request_revision) IS UNIQUE",
+    "CREATE CONSTRAINT dcm_wave_slot_identity IF NOT EXISTS "
+    "FOR (z:DCMWaveSlot) REQUIRE "
+    "(z.session_id, z.wave_id, z.role, z.request_revision) IS UNIQUE",
+    "CREATE CONSTRAINT dcm_wave_slot_request_id IF NOT EXISTS "
+    "FOR (z:DCMWaveSlot) REQUIRE z.request_id IS UNIQUE",
+    "CREATE CONSTRAINT dcm_wave_slot_seat IF NOT EXISTS "
+    "FOR (z:DCMWaveSlot) REQUIRE "
+    "(z.session_id, z.wave_id, z.seat_id, z.request_revision) IS UNIQUE",
+    "CREATE CONSTRAINT dcm_wave_contrib_request_id IF NOT EXISTS "
+    "FOR (c:DCMContribution) REQUIRE c.request_id IS UNIQUE",
+    "CREATE CONSTRAINT dcm_wave_contrib_slot IF NOT EXISTS "
+    "FOR (c:DCMContribution) REQUIRE "
+    "(c.session_id, c.wave_id, c.role, c.request_revision) IS UNIQUE",
+)
 
 
 class StaleReadError(Exception):
@@ -199,27 +226,24 @@ def _require_safe_uri(uri: str) -> None:
 
 def _db():
     global _driver
-    if _driver is None:
+    if _driver is not None:
+        return _driver
+    with _driver_init_lock:
+        if _driver is not None:
+            return _driver
         _require_safe_uri(DCM_NEO4J_URI)
-        _driver = GraphDatabase.driver(DCM_NEO4J_URI, auth=_AUTH)
-        _driver.verify_connectivity()
-        with _driver.session(database=DCM_NEO4J_DATABASE) as s:
-            s.run(
-                "CREATE CONSTRAINT dcm_session_id IF NOT EXISTS "
-                "FOR (x:DCMSession) REQUIRE x.session_id IS UNIQUE"
-            )
-            s.run(
-                "CREATE CONSTRAINT dcm_contrib_id IF NOT EXISTS "
-                "FOR (c:DCMContribution) REQUIRE c.contrib_id IS UNIQUE"
-            )
-            # The REAL compare-and-set. One contribution per (session, slot=seq). Two writers at
-            # the same read_version both claim seq=read_version; the constraint's index lock lets
-            # EXACTLY ONE commit — the rest hit ConstraintError -> StaleReadError. This is the
-            # serialization the count-check could not give (Neo4j read-committed locks no count).
-            s.run(
-                "CREATE CONSTRAINT dcm_contrib_slot IF NOT EXISTS "
-                "FOR (c:DCMContribution) REQUIRE (c.session_id, c.seq) IS UNIQUE"
-            )
+        candidate = GraphDatabase.driver(DCM_NEO4J_URI, auth=_AUTH)
+        try:
+            candidate.verify_connectivity()
+            with candidate.session(database=DCM_NEO4J_DATABASE) as session:
+                for statement in _SCHEMA_STATEMENTS:
+                    session.execute_write(
+                        lambda tx, query=statement: tx.run(query).consume()
+                    )
+        except Exception:
+            candidate.close()
+            raise
+        _driver = candidate
     return _driver
 
 
@@ -280,35 +304,7 @@ def _require_sha256(value, field: str) -> str:
 
 
 def _ensure_wave_schema():
-    global _wave_schema_ready
-    driver = _db()
-    if _wave_schema_ready:
-        return driver
-    statements = (
-        "CREATE CONSTRAINT dcm_wave_id IF NOT EXISTS "
-        "FOR (w:DCMWave) REQUIRE w.wave_id IS UNIQUE",
-        "CREATE CONSTRAINT dcm_wave_logical_identity IF NOT EXISTS "
-        "FOR (w:DCMWave) REQUIRE "
-        "(w.session_id, w.round, w.phase, w.prompt_revision, w.request_revision) IS UNIQUE",
-        "CREATE CONSTRAINT dcm_wave_slot_identity IF NOT EXISTS "
-        "FOR (z:DCMWaveSlot) REQUIRE "
-        "(z.session_id, z.wave_id, z.role, z.request_revision) IS UNIQUE",
-        "CREATE CONSTRAINT dcm_wave_slot_request_id IF NOT EXISTS "
-        "FOR (z:DCMWaveSlot) REQUIRE z.request_id IS UNIQUE",
-        "CREATE CONSTRAINT dcm_wave_slot_seat IF NOT EXISTS "
-        "FOR (z:DCMWaveSlot) REQUIRE "
-        "(z.session_id, z.wave_id, z.seat_id, z.request_revision) IS UNIQUE",
-        "CREATE CONSTRAINT dcm_wave_contrib_request_id IF NOT EXISTS "
-        "FOR (c:DCMContribution) REQUIRE c.request_id IS UNIQUE",
-        "CREATE CONSTRAINT dcm_wave_contrib_slot IF NOT EXISTS "
-        "FOR (c:DCMContribution) REQUIRE "
-        "(c.session_id, c.wave_id, c.role, c.request_revision) IS UNIQUE",
-    )
-    with driver.session(database=DCM_NEO4J_DATABASE) as session:
-        for statement in statements:
-            session.run(statement).consume()
-    _wave_schema_ready = True
-    return driver
+    return _db()
 
 
 def canonical_wave_request_id(request_identity: dict) -> str:

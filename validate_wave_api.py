@@ -141,6 +141,14 @@ def cleanup(session_ids):
 session_ids = []
 
 try:
+    with cf.ThreadPoolExecutor(max_workers=16) as executor:
+        cold_start_drivers = list(
+            executor.map(lambda _: mesh._ensure_wave_schema(), range(16))
+        )
+    check(
+        "16 concurrent cold starts publish one fully initialized driver",
+        len({id(driver) for driver in cold_start_drivers}) == 1,
+    )
     session_id = mesh.start_session(
         "WAVE VALIDATION (throwaway)", "scoped cleanup", roles=ROLES
     )
