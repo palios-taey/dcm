@@ -10,6 +10,7 @@ import uuid
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import mesh
+import taey_adapter
 
 
 PASS = True
@@ -2156,6 +2157,70 @@ try:
     except mesh.WaveStateError as error:
         wave_bypass_rejected = error.outcome == "coordination_mode_conflict"
     check("wave cannot enter a linear-mode session", wave_bypass_rejected)
+
+    # Validate recover_wave_request against an authoritatively failed session
+    failed_recovery_session = mesh.start_session(
+        "CLOSED SESSION RECOVERY VALIDATION", "scoped cleanup", roles=["role-1"]
+    )
+    session_ids.append(failed_recovery_session)
+    failed_wave_open = mesh.open_wave(
+        failed_recovery_session,
+        round=1,
+        phase="independent",
+        prompt_id="prompt-fail-recov",
+        prompt_revision=1,
+        prompt_messages=PROMPT_MESSAGES,
+        attachment_evidence_digests=[],
+        request_revision=1,
+        required_members=[{"seat_id": "taey-council-1", "role": "role-1"}],
+    )
+    fail_identity, fail_request_id = reserve(
+        failed_recovery_session, failed_wave_open, "role-1", "taey-council-1"
+    )
+    claim(
+        failed_recovery_session,
+        failed_wave_open,
+        "role-1",
+        fail_identity,
+        fail_request_id,
+    )
+    mesh.fail_session(
+        failed_recovery_session,
+        failure_kind="seat_inference_side_effect_uncertain",
+        failure_detail_sha256=mesh._text_sha256("timeout during inference"),
+    )
+    ack_receipts = []
+    recov_req = {
+        **fail_identity,
+        "dcm_session_id": failed_recovery_session,
+        "delivery_id": "delivery-fail-recov-1",
+        "request_id": fail_request_id,
+        "parent_contribution_ids": [],
+    }
+    recovered_out = taey_adapter.recover_wave_request(
+        recov_req,
+        acknowledge=lambda rcpt: ack_receipts.append(rcpt),
+        emitter_process_generation="test-gen",
+        terminal_outcome="dead_seat",
+        inference_performed=False,
+        failure_stage="dead_generation_recovery",
+        failure_detail="dead generation recovery test",
+    )
+    recov_wave = mesh.read_wave(failed_recovery_session, failed_wave_open["wave_id"])
+    recov_slot = recov_wave["slots"][0]
+    check(
+        "closed session recovery produces valid transport receipt without graph mutation",
+        len(ack_receipts) == 1
+        and ack_receipts[0]["terminal_outcome"] == "session_failed"
+        and ack_receipts[0]["stage"] == "terminal_acknowledged"
+        and ack_receipts[0]["failure_stage"] == "session_failed"
+        and ack_receipts[0]["session_failure_sha256"]
+        == recov_wave["session_failure_sha256"]
+        and ack_receipts[0]["failure_detail_sha256"]
+        == recov_wave["session_failure"]["failure_detail_sha256"]
+        and recov_slot["state"] == "claimed"
+        and recovered_out["graph"]["outcome"] == "session_failed",
+    )
 finally:
     try:
         cleanup(session_ids)
