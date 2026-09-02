@@ -105,6 +105,7 @@ peers were in front of it and that it could not commit while ignoring the versio
 | `mesh_cli.py` | the substrate's own CLI: inspect a session, read contributions, check coordination without running a council. |
 | `arms_literals.py` | the frozen role literals shared by the council and historical evaluation — literal, so a role cannot drift between runs. |
 | `validate_substrate.py` | proves the CAS actually serialises: concurrent contributors, one winner per version. Run it before trusting a deployment. |
+| `validate_schema_init.py` | proves ten simultaneous OS processes can initialize all ten DCM constraints from a clean Neo4j database without partial driver publication. |
 | `validate_wave_api.py` | validates graph-backed pre-inference idempotency, lost-ack recovery, seven sibling commits, exact seat/role continuity, immutable parent advancement, explicit incomplete and superseded rounds, linear/wave isolation, and terminal final immutability. |
 | `docs_coherence_check.py` | fails when this README and the code disagree — the map is checked, not maintained by hope. |
 | `setup.sh` | one-command install of the runtime the CLIs and adapters need. |

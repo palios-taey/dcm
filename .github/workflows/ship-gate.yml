@@ -29,6 +29,8 @@ jobs:
       NEO4J_AUTH: none
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -57,6 +59,8 @@ jobs:
           print("neo4j did not become ready", file=sys.stderr)
           sys.exit(1)
           PY
+      - name: Execute multiprocess cold-start validation against clean Neo4j
+        run: python3 validate_schema_init.py
       - name: Verify documentation coherence
         run: python3 docs_coherence_check.py
       - name: Execute DCM substrate validation against Neo4j

@@ -55,6 +55,7 @@ python mesh_cli.py contribute <session_id> <role> <read_version> --content -
 ## Verification
 ```bash
 python validate_substrate.py        # proves the CAS serializes (N-thread race → 1 win / N-1 stale)
+python validate_schema_init.py      # requires a clean Neo4j; proves simultaneous OS-process initialization
 python validate_wave_api.py         # proves seven-seat wave, replay, supersession, and final invariants
 python docs_coherence_check.py       # fails if CLAUDE.md drifts from the code
 ```
