@@ -223,7 +223,21 @@ def cleanup(session_ids):
             ).consume()
 
 
+def session_residue(session_ids):
+    if not session_ids:
+        return []
+    with mesh._db().session(database=mesh.DCM_NEO4J_DATABASE) as session:
+        record = session.run(
+            """MATCH (x:DCMSession)
+               WHERE x.session_id IN $session_ids
+               RETURN collect(x.session_id) AS session_ids""",
+            session_ids=sorted(set(session_ids)),
+        ).single()
+    return sorted(record["session_ids"])
+
+
 session_ids = []
+malformed_probe_ids = []
 
 try:
     with cf.ThreadPoolExecutor(max_workers=16) as executor:
@@ -260,31 +274,59 @@ try:
         "caller-supplied Presence round identity is preserved exactly",
         created_external_session_id == external_session_id,
     )
-    malformed_external_ids = (
-        "",
-        " " + external_session_id,
-        external_session_id + " ",
-        "dcm_0123456789ab",
-        "dcm-20261340T256199Z-0123456789ab",
-        "dcm-20260230T120000Z-0123456789ab",
-        "dcm-20260101T000000Z-0123456789AB",
-        "other-20260101T000000Z-0123456789ab",
+    probe_suffix = uuid.uuid4().hex[:12]
+    probe_timestamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+    empty_external_id_reason = None
+    try:
+        mesh._validated_presence_round_session_id("")
+    except mesh.SessionIdentityValidationError as error:
+        empty_external_id_reason = error.reason
+    check(
+        "empty external identity is invalid_format",
+        empty_external_id_reason == "invalid_format",
     )
+    malformed_external_ids = (
+        (f" dcm-{probe_timestamp}-{probe_suffix}", "invalid_format"),
+        (f"dcm-{probe_timestamp}-{probe_suffix} ", "invalid_format"),
+        (f"dcm_{probe_suffix}", "invalid_format"),
+        (f"dcm-20261340T256199Z-{probe_suffix}", "invalid_format"),
+        (f"dcm-20260230T120000Z-{probe_suffix}", "invalid_calendar"),
+        (f"dcm-20260101T000000Z-{probe_suffix.upper()}", "invalid_format"),
+        (f"other-20260101T000000Z-{probe_suffix}", "invalid_format"),
+    )
+    malformed_probe_ids.extend(value for value, _ in malformed_external_ids)
+    session_ids.extend(malformed_probe_ids)
     malformed_external_ids_rejected = True
-    for malformed_external_id in malformed_external_ids:
+    for malformed_external_id, expected_reason in malformed_external_ids:
         try:
-            mesh.start_session(
+            accidentally_created_id = mesh.start_session(
                 "MALFORMED EXTERNAL ID VALIDATION (throwaway)",
                 "must not be created",
                 roles=["external-role"],
                 session_id=malformed_external_id,
             )
+        except mesh.SessionIdentityValidationError as error:
+            malformed_external_ids_rejected = (
+                malformed_external_ids_rejected and error.reason == expected_reason
+            )
         except ValueError:
-            continue
-        malformed_external_ids_rejected = False
+            malformed_external_ids_rejected = False
+        else:
+            malformed_external_ids_rejected = False
+            if accidentally_created_id not in session_ids:
+                session_ids.append(accidentally_created_id)
+                malformed_probe_ids.append(accidentally_created_id)
     check(
-        "malformed external identities are rejected without normalization",
+        "malformed external identities return exact validation reason codes",
         malformed_external_ids_rejected,
+    )
+    check(
+        "validation and collision failures are structurally distinct ValueErrors",
+        issubclass(mesh.SessionIdentityValidationError, ValueError)
+        and issubclass(mesh.SessionIdentityConflictError, ValueError)
+        and not issubclass(
+            mesh.SessionIdentityConflictError, mesh.SessionIdentityValidationError
+        ),
     )
     duplicate_external_id_error = None
     try:
@@ -294,7 +336,7 @@ try:
             roles=["external-role"],
             session_id=external_session_id,
         )
-    except ValueError as error:
+    except mesh.SessionIdentityConflictError as error:
         duplicate_external_id_error = str(error)
     check(
         "duplicate external identity fails closed with read/resume recovery",
@@ -1720,7 +1762,14 @@ try:
         wave_bypass_rejected = error.outcome == "coordination_mode_conflict"
     check("wave cannot enter a linear-mode session", wave_bypass_rejected)
 finally:
-    cleanup(session_ids)
+    try:
+        cleanup(session_ids)
+    finally:
+        malformed_residue = session_residue(malformed_probe_ids)
+        check(
+            "scoped cleanup leaves no accidentally created malformed-session residue",
+            malformed_residue == [],
+        )
     print(f"cleaned up {len(session_ids)} validation session(s)")
 
 print(f"\n=== DCM WAVE API VALIDATION: {'PASS' if PASS else 'FAIL'} ===")

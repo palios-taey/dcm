@@ -211,6 +211,18 @@ class WaveIdentityConflictError(WaveStateError):
         super().__init__("identity_conflict", detail)
 
 
+class SessionIdentityValidationError(ValueError):
+    """Raised when a caller-supplied Presence round identity is not canonical."""
+
+    def __init__(self, reason: str, detail: str):
+        self.reason = reason
+        super().__init__(detail)
+
+
+class SessionIdentityConflictError(ValueError):
+    """Raised when a caller tries to create an external session that already exists."""
+
+
 class WaveFrontierMismatchError(WaveStateError):
     """Raised when a request does not carry its wave's exact immutable parent frontier."""
 
@@ -323,15 +335,17 @@ def _validated_presence_round_session_id(value) -> str:
         not isinstance(value, str)
         or _PRESENCE_ROUND_SESSION_ID_RE.fullmatch(value) is None
     ):
-        raise ValueError(
+        raise SessionIdentityValidationError(
+            "invalid_format",
             "session_id must match the Presence round identity "
-            "dcm-YYYYMMDDTHHMMSSZ-<12 lowercase hex>"
+            "dcm-YYYYMMDDTHHMMSSZ-<12 lowercase hex>",
         )
     try:
         time.strptime(value[4:20], "%Y%m%dT%H%M%SZ")
     except ValueError as exc:
-        raise ValueError(
-            "session_id must contain a valid UTC timestamp in the Presence round identity"
+        raise SessionIdentityValidationError(
+            "invalid_calendar",
+            "session_id must contain a valid UTC timestamp in the Presence round identity",
         ) from exc
     return value
 
@@ -1181,7 +1195,7 @@ def start_session(
     except ConstraintError as exc:
         if not external_identity:
             raise
-        raise ValueError(
+        raise SessionIdentityConflictError(
             f"DCM session {sid} already exists; recovery must use read_session()"
         ) from exc
     return sid

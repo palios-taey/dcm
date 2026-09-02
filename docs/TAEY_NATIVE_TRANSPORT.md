@@ -231,7 +231,9 @@ identity. `start_session(..., session_id=round_id)` neither normalizes nor trans
 identity is rejected before graph creation; an existing identity is rejected with an instruction to
 read/resume the existing session, never create a duplicate. Existing callers that omit `session_id`
 retain their generated legacy identity. A future translation requires a new contract version; no
-runtime may infer one.
+runtime may infer one. `SessionIdentityValidationError.reason` distinguishes `invalid_format` from
+`invalid_calendar`; uniqueness collisions raise the separate `SessionIdentityConflictError`. Both
+remain `ValueError` subclasses for existing broad exception handling.
 
 For explicit v2 waves, `prompt.sha256` binds only the shared ordered request/evidence material common
 to every seat. Its canonical source object is:
