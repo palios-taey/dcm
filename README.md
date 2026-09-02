@@ -86,8 +86,16 @@ the void and silently work alone**, then report success. DCM's mechanisms, state
   accounts for a superseded prompt revision; `verify_wave_coordination()` audits every sibling
   against the exact graph-derived parent set. `publish_final()` accepts exactly one complete
   critique frontier and then makes both linear and wave writes structurally impossible.
-  Explicit taey-native-dcm-request/v2 waves additionally bind each slot's complete prompt-contract
-  digest and external model-identity-receipt digest without changing implicit v1 waves.
+  Explicit taey-native-dcm-request/v2 waves bind one shared ordered request/evidence digest plus
+  each role slot's exact system-message/renderer/response-contract digest and external
+  model-identity-receipt digest without changing implicit v1 waves. DCM binds those per-seat opaque
+  digests; a separate Presence producer/verifier must establish their authenticity before any
+  production caller selects v2.
+- **One Presence round/session identity** — existing `start_session(topic, payload, roles)` callers
+  retain generated `dcm_<12 lowercase hex>` IDs. The additive keyword-only
+  `session_id="dcm-YYYYMMDDTHHMMSSZ-<12 lowercase hex>"` path accepts the exact public Presence
+  round namespace without normalization. Malformed or already-existing external identities fail;
+  recovery reads/resumes the existing session rather than creating it again.
 
 **What DCM does NOT claim:** that coordination "cannot be faked" in the absolute. Semantic
 incorporation is the agent's asserted good faith, backed by the structural guarantee that the

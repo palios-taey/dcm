@@ -2,7 +2,10 @@
 
 import concurrent.futures as cf
 import os
+import re
 import sys
+import time
+import uuid
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import mesh
@@ -16,9 +19,25 @@ MEMBERS = [
 ]
 PROMPT_MESSAGES = [{"role": "user", "content": "wave validation"}]
 V2_REQUEST_CONTRACT = "taey-native-dcm-request/v2"
-V2_PROMPT_CONTRACT_SHA256 = mesh._canonical_sha256(
-    {"shared": "presence shared contract", "role": "v2-role contract"}
-)
+V2_SHARED_PROMPT_MESSAGES = [
+    {"role": "user", "content": "shared request for every role"},
+    {"role": "user", "content": "shared response requirements"},
+]
+V2_SHARED_EVIDENCE_DIGESTS = [
+    mesh._canonical_sha256({"shared_evidence": "validation-a"}),
+    mesh._canonical_sha256({"shared_evidence": "validation-b"}),
+]
+V2_PROMPT_CONTRACT_SOURCE = {
+    "role": "v2-role",
+    "system_message": (
+        "seat_id=taey-council-v2 role=v2-role role_contract_revision=v1\n"
+        "Shared validation system instructions.\n"
+        "You are the exact v2 validation role."
+    ),
+    "renderer_revision": "presence-council-renderer/v1",
+    "response_contract_revision": "taey-council-contribution/v1",
+}
+V2_PROMPT_CONTRACT_SHA256 = mesh._canonical_sha256(V2_PROMPT_CONTRACT_SOURCE)
 V2_MODEL_IDENTITY_RECEIPT_SHA256 = mesh._canonical_sha256(
     {"model_identity_receipt": "validation"}
 )
@@ -29,6 +48,31 @@ V2_MEMBERS = [
         "prompt_contract_sha256": V2_PROMPT_CONTRACT_SHA256,
         "model_identity_receipt_sha256": V2_MODEL_IDENTITY_RECEIPT_SHA256,
     }
+]
+V2_ROLE_CONTRACT_SOURCES = [
+    {
+        "role": role,
+        "system_message": (
+            f"seat_id=taey-council-v2-{index} role={role} "
+            "role_contract_revision=v1\n"
+            "Shared validation system instructions.\n"
+            f"You are the exact {role} validation role."
+        ),
+        "renderer_revision": "presence-council-renderer/v1",
+        "response_contract_revision": "taey-council-contribution/v1",
+    }
+    for index, role in enumerate(("v2-role-a", "v2-role-b"), start=1)
+]
+V2_ROLE_BOUND_MEMBERS = [
+    {
+        "seat_id": f"taey-council-v2-{index}",
+        "role": source["role"],
+        "prompt_contract_sha256": mesh._canonical_sha256(source),
+        "model_identity_receipt_sha256": mesh._canonical_sha256(
+            {"model_identity_receipt": source["role"]}
+        ),
+    }
+    for index, source in enumerate(V2_ROLE_CONTRACT_SOURCES, start=1)
 ]
 
 
@@ -194,6 +238,74 @@ try:
         "WAVE VALIDATION (throwaway)", "scoped cleanup", roles=ROLES
     )
     session_ids.append(session_id)
+    check(
+        "implicit start_session retains the legacy generated identity",
+        re.fullmatch(r"dcm_[0-9a-f]{12}", session_id) is not None,
+    )
+
+    external_session_id = (
+        "dcm-"
+        + time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+        + "-"
+        + uuid.uuid4().hex[:12]
+    )
+    created_external_session_id = mesh.start_session(
+        "EXTERNAL ID VALIDATION (throwaway)",
+        "scoped cleanup",
+        roles=["external-role"],
+        session_id=external_session_id,
+    )
+    session_ids.append(external_session_id)
+    check(
+        "caller-supplied Presence round identity is preserved exactly",
+        created_external_session_id == external_session_id,
+    )
+    malformed_external_ids = (
+        "",
+        " " + external_session_id,
+        external_session_id + " ",
+        "dcm_0123456789ab",
+        "dcm-20261340T256199Z-0123456789ab",
+        "dcm-20260101T000000Z-0123456789AB",
+        "other-20260101T000000Z-0123456789ab",
+    )
+    malformed_external_ids_rejected = True
+    for malformed_external_id in malformed_external_ids:
+        try:
+            mesh.start_session(
+                "MALFORMED EXTERNAL ID VALIDATION (throwaway)",
+                "must not be created",
+                roles=["external-role"],
+                session_id=malformed_external_id,
+            )
+        except ValueError:
+            continue
+        malformed_external_ids_rejected = False
+    check(
+        "malformed external identities are rejected without normalization",
+        malformed_external_ids_rejected,
+    )
+    duplicate_external_id_error = None
+    try:
+        mesh.start_session(
+            "DUPLICATE EXTERNAL ID VALIDATION (throwaway)",
+            "must not replace the original",
+            roles=["external-role"],
+            session_id=external_session_id,
+        )
+    except ValueError as error:
+        duplicate_external_id_error = str(error)
+    check(
+        "duplicate external identity fails closed with read/resume recovery",
+        duplicate_external_id_error
+        == f"DCM session {external_session_id} already exists; recovery must use read_session()",
+    )
+    external_session = mesh.read_session(external_session_id)
+    check(
+        "duplicate external identity does not replace the original session",
+        external_session["topic"] == "EXTERNAL ID VALIDATION (throwaway)"
+        and external_session["payload"] == "scoped cleanup",
+    )
 
     with cf.ThreadPoolExecutor(max_workers=16) as executor:
         opened_ids = list(
@@ -391,8 +503,8 @@ try:
             phase="independent",
             prompt_id="v2-contract",
             prompt_revision=1,
-            prompt_messages=PROMPT_MESSAGES,
-            attachment_evidence_digests=[],
+            prompt_messages=V2_SHARED_PROMPT_MESSAGES,
+            attachment_evidence_digests=V2_SHARED_EVIDENCE_DIGESTS,
             request_revision=1,
             required_members=V2_MEMBERS,
         )
@@ -409,8 +521,8 @@ try:
         phase="independent",
         prompt_id="v2-contract",
         prompt_revision=1,
-        prompt_messages=PROMPT_MESSAGES,
-        attachment_evidence_digests=[],
+        prompt_messages=V2_SHARED_PROMPT_MESSAGES,
+        attachment_evidence_digests=V2_SHARED_EVIDENCE_DIGESTS,
         request_revision=1,
         required_members=V2_MEMBERS,
         request_contract=V2_REQUEST_CONTRACT,
@@ -423,6 +535,77 @@ try:
         and v2_slot["prompt_contract_sha256"] == V2_PROMPT_CONTRACT_SHA256
         and v2_slot["model_identity_receipt_sha256"]
         == V2_MODEL_IDENTITY_RECEIPT_SHA256,
+    )
+    check(
+        "v2 wave prompt digest binds only the ordered shared request/evidence source",
+        v2_wave["prompt_sha256"]
+        == mesh.canonical_prompt_sha256(
+            V2_SHARED_PROMPT_MESSAGES, V2_SHARED_EVIDENCE_DIGESTS
+        )
+        and v2_wave["prompt_messages_json"]
+        == mesh._canonical_json(V2_SHARED_PROMPT_MESSAGES)
+        and v2_wave["attachment_evidence_digests"]
+        == V2_SHARED_EVIDENCE_DIGESTS,
+    )
+    check(
+        "v2 shared digest is deterministic and order-sensitive",
+        mesh.canonical_prompt_sha256(
+            V2_SHARED_PROMPT_MESSAGES, V2_SHARED_EVIDENCE_DIGESTS
+        )
+        == mesh.canonical_prompt_sha256(
+            V2_SHARED_PROMPT_MESSAGES, V2_SHARED_EVIDENCE_DIGESTS
+        )
+        and mesh.canonical_prompt_sha256(
+            list(reversed(V2_SHARED_PROMPT_MESSAGES)),
+            V2_SHARED_EVIDENCE_DIGESTS,
+        )
+        != v2_wave["prompt_sha256"]
+        and mesh.canonical_prompt_sha256(
+            V2_SHARED_PROMPT_MESSAGES,
+            list(reversed(V2_SHARED_EVIDENCE_DIGESTS)),
+        )
+        != v2_wave["prompt_sha256"],
+    )
+    check(
+        "v2 role prompt digest binds its exact system/renderer/response source",
+        v2_slot["prompt_contract_sha256"]
+        == mesh._canonical_sha256(V2_PROMPT_CONTRACT_SOURCE),
+    )
+    shared_prompt_drift_rejected = []
+    for drifted_messages, drifted_evidence in (
+        (
+            [
+                V2_SHARED_PROMPT_MESSAGES[0],
+                {"role": "user", "content": "drifted shared response requirements"},
+            ],
+            V2_SHARED_EVIDENCE_DIGESTS,
+        ),
+        (
+            V2_SHARED_PROMPT_MESSAGES,
+            [
+                V2_SHARED_EVIDENCE_DIGESTS[0],
+                mesh._canonical_sha256({"shared_evidence": "drifted-b"}),
+            ],
+        ),
+    ):
+        try:
+            mesh.open_wave(
+                v2_session,
+                round=1,
+                phase="independent",
+                prompt_id="v2-contract",
+                prompt_revision=1,
+                prompt_messages=drifted_messages,
+                attachment_evidence_digests=drifted_evidence,
+                request_revision=1,
+                required_members=V2_MEMBERS,
+                request_contract=V2_REQUEST_CONTRACT,
+            )
+        except mesh.WaveIdentityConflictError:
+            shared_prompt_drift_rejected.append(True)
+    check(
+        "v2 shared request/evidence digest drift fails closed",
+        shared_prompt_drift_rejected == [True, True],
     )
     v2_identity = v2_request_identity(v2_session, v2_wave, V2_MEMBERS[0])
     missing_v2_identity_field = dict(v2_identity)
@@ -534,6 +717,53 @@ try:
     check(
         "per-slot v2 contract digests cannot drift between waves",
         v2_membership_drift_rejected,
+    )
+
+    v2_role_binding_session = mesh.start_session(
+        "V2 ROLE DIGEST BINDING (throwaway)",
+        "scoped cleanup",
+        roles=[member["role"] for member in V2_ROLE_BOUND_MEMBERS],
+    )
+    session_ids.append(v2_role_binding_session)
+    mesh.open_wave(
+        v2_role_binding_session,
+        round=1,
+        phase="independent",
+        prompt_id="v2-role-binding",
+        prompt_revision=1,
+        prompt_messages=V2_SHARED_PROMPT_MESSAGES,
+        attachment_evidence_digests=V2_SHARED_EVIDENCE_DIGESTS,
+        request_revision=1,
+        required_members=V2_ROLE_BOUND_MEMBERS,
+        request_contract=V2_REQUEST_CONTRACT,
+    )
+    swapped_role_digests = [dict(member) for member in V2_ROLE_BOUND_MEMBERS]
+    (
+        swapped_role_digests[0]["prompt_contract_sha256"],
+        swapped_role_digests[1]["prompt_contract_sha256"],
+    ) = (
+        swapped_role_digests[1]["prompt_contract_sha256"],
+        swapped_role_digests[0]["prompt_contract_sha256"],
+    )
+    role_digest_swap_rejected = False
+    try:
+        mesh.open_wave(
+            v2_role_binding_session,
+            round=1,
+            phase="independent",
+            prompt_id="v2-role-binding",
+            prompt_revision=1,
+            prompt_messages=V2_SHARED_PROMPT_MESSAGES,
+            attachment_evidence_digests=V2_SHARED_EVIDENCE_DIGESTS,
+            request_revision=1,
+            required_members=swapped_role_digests,
+            request_contract=V2_REQUEST_CONTRACT,
+        )
+    except mesh.WaveIdentityConflictError:
+        role_digest_swap_rejected = True
+    check(
+        "swapping per-role prompt-contract digests fails closed",
+        role_digest_swap_rejected,
     )
 
     remapped_members = [dict(member) for member in MEMBERS]
