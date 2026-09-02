@@ -22,7 +22,7 @@ name: r5-audit-gate
 
 on:
   pull_request:
-    types: [opened, reopened, synchronize]
+    types: [opened, reopened, synchronize, edited]
   status: {}
 
 permissions:
