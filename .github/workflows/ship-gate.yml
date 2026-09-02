@@ -32,6 +32,21 @@ jobs:
           python-version: "3.12"
       - name: Install package from clean checkout
         run: pip install -e . -r requirements.txt
+      - name: Wait for Neo4j readiness
+        run: |
+          python3 - <<'PY'
+          import socket, time, sys
+          deadline = time.time() + 60
+          while time.time() < deadline:
+              try:
+                  with socket.create_connection(("127.0.0.1", 7687), timeout=2):
+                      print("Neo4j port 7687 is open and ready")
+                      sys.exit(0)
+              except OSError:
+                  time.sleep(1)
+          print("Timeout waiting for Neo4j port 7687", file=sys.stderr)
+          sys.exit(1)
+          PY
       - name: Verify documentation coherence
         run: python3 docs_coherence_check.py
       - name: Execute DCM substrate validation against Neo4j
