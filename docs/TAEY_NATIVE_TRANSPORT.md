@@ -161,6 +161,9 @@ Every receipt is UTF-8 JSON encoded with keys sorted lexicographically, separato
 `ensure_ascii=false`, and `allow_nan=false`. Set-like arrays are sorted and contain no duplicates.
 Digests use `sha256:<64 lowercase hex>`. `receipt_sha256` is the digest of the canonical object with
 that field omitted. Timestamps are diagnostic only; they never establish cross-host causal order.
+Each named digest hashes the canonical JSON value named by the contract; implementations never hash
+delimiter-free string concatenation. Ordered model messages remain ordered. Only fields explicitly
+described as set-like are sorted.
 
 Every contribution and transport receipt carries this immutable envelope:
 
@@ -182,6 +185,10 @@ Every contribution and transport receipt carries this immutable envelope:
   "role_id": "context-memory",
   "request_revision": 1,
   "request_id": "sha256:...",
+  "emitter": {
+    "component": "native-coordinator|taey-council-seat|dcm-adapter",
+    "process_generation": "..."
+  },
   "graph": {
     "uri": "bolt://127.0.0.1:7687",
     "database": "neo4j"
@@ -207,16 +214,19 @@ Every contribution and transport receipt carries this immutable envelope:
 ```
 
 For the first adapter, `correlation_id` and `session_id` are identical. A future translation requires
-a new contract version; no runtime may infer one. `request_id` is the SHA-256 of the canonical tuple:
+a new contract version; no runtime may infer one. `prompt.sha256` hashes the canonical ordered model
+message list plus the ordered attachment/evidence content digests. `parent_frontier_sha256` hashes
+the canonical sorted `parent_contribution_ids` array. `request_id` hashes a canonical JSON object
+with these named fields:
 
 ```text
-session_id + wave_id + round + phase
-+ prompt_id + prompt_revision + prompt_sha256
-+ seat_id + role_id + request_revision
-+ parent_frontier_sha256
-+ expected process generation
-+ model endpoint + requested alias
-+ model manifest/content digests + serving-container digest
+session_id, wave_id, round, phase
+prompt_id, prompt_revision, prompt_sha256
+seat_id, role_id, request_revision
+parent_frontier_sha256
+expected process generation
+model endpoint, requested alias
+model manifest/content digests, serving-container digest
 ```
 
 Redis stream/list IDs and timestamps are excluded. A changed prompt, frontier, role, process
@@ -248,7 +258,9 @@ After a successful graph commit, the envelope carries:
 
 `kind` uses the existing public DCM kinds: `contribution`, `plan_proposal`, `consensus_plan`,
 `concern`, or `resolution`. The existing structured `taey-council-contribution/v1` object remains
-the content; the receipt does not define another role-output schema.
+the content; the receipt does not define another role-output schema. `content_sha256` hashes that
+canonical structured object. `evidence_ref_sha256`, when present, hashes the exact UTF-8 evidence
+reference string.
 
 For a Taey-native wave, all three sets below must be identical:
 
@@ -265,7 +277,9 @@ terminal `frontier_mismatch`, not a reduced frontier or a retry.
 
 On success, the observed process generation equals the expected generation, the served alias equals
 the requested alias, and the graph URI/database equal the explicitly configured DCM target. A
-receipt cannot silently substitute the orchestrator graph at port `7689`.
+receipt cannot silently substitute the orchestrator graph at port `7689`. The observed generation
+may be `null` only on a coordinator-issued pre-claim refusal; such a receipt cannot carry a
+contribution ID or claim that inference occurred.
 
 Exactly one contribution occupies `(session_id, wave_id, role_id, request_revision)`. Redelivery of
 an identical request returns the original contribution ID and receipt without another inference or
@@ -303,9 +317,11 @@ success it must carry the exact `contribution_id` and `contribution_receipt_sha2
 Neo4j.
 
 If graph commit succeeds but acknowledgement delivery fails, Neo4j remains authoritative. Recovery
-reads the contribution by deterministic request ID and re-emits the same acknowledgement. It never
-performs inference again. A duplicate delivery records `duplicate_dispatch`, points at the original
-request, and returns the original terminal receipt.
+reads the contribution by deterministic request ID and re-emits the same acknowledgement. It keeps
+the original contribution receipt and inference-process generation unchanged while the transport
+receipt's `emitter.process_generation` identifies the recovery process. It never performs inference
+again. A duplicate delivery records `duplicate_dispatch`, points at the original request, and
+returns the original terminal receipt.
 
 ### Closed outcomes and wave advancement
 
