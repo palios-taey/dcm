@@ -2160,7 +2160,7 @@ try:
 
     # Validate recover_wave_request against an authoritatively failed session
     failed_recovery_session = mesh.start_session(
-        "CLOSED SESSION RECOVERY VALIDATION", "scoped cleanup", roles=["role-1"]
+        "CLOSED SESSION RECOVERY VALIDATION", "scoped cleanup", roles=["v2-role"]
     )
     session_ids.append(failed_recovery_session)
     failed_wave_open = mesh.open_wave(
@@ -2169,20 +2169,32 @@ try:
         phase="independent",
         prompt_id="prompt-fail-recov",
         prompt_revision=1,
-        prompt_messages=PROMPT_MESSAGES,
-        attachment_evidence_digests=[],
+        prompt_messages=V2_SHARED_PROMPT_MESSAGES,
+        attachment_evidence_digests=V2_SHARED_EVIDENCE_DIGESTS,
         request_revision=1,
-        required_members=[{"seat_id": "taey-council-1", "role": "role-1"}],
+        required_members=V2_MEMBERS,
+        request_contract=V2_REQUEST_CONTRACT,
     )
-    fail_identity, fail_request_id = reserve(
-        failed_recovery_session, failed_wave_open, "role-1", "taey-council-1"
+    fail_identity = v2_request_identity(
+        failed_recovery_session, failed_wave_open, V2_MEMBERS[0]
     )
-    claim(
+    fail_reservation = mesh.reserve_wave_request(
         failed_recovery_session,
-        failed_wave_open,
-        "role-1",
-        fail_identity,
-        fail_request_id,
+        failed_wave_open["wave_id"],
+        role="v2-role",
+        request_revision=1,
+        request_identity=fail_identity,
+        parent_contribution_ids=[],
+    )
+    fail_request_id = fail_reservation["request_id"]
+    mesh.claim_wave_request(
+        failed_recovery_session,
+        failed_wave_open["wave_id"],
+        role="v2-role",
+        request_revision=1,
+        request_id=fail_request_id,
+        parent_contribution_ids=[],
+        claim_observation=v2_claim_observation(fail_identity),
     )
     mesh.fail_session(
         failed_recovery_session,
@@ -2212,12 +2224,27 @@ try:
         "closed session recovery produces valid transport receipt without graph mutation",
         len(ack_receipts) == 1
         and ack_receipts[0]["terminal_outcome"] == "session_failed"
+        and ack_receipts[0]["contract"] == "taey-native-dcm-receipt/v2"
+        and ack_receipts[0]["request_contract"] == V2_REQUEST_CONTRACT
+        and ack_receipts[0]["prompt_contract_sha256"]
+        == V2_MEMBERS[0]["prompt_contract_sha256"]
+        and ack_receipts[0]["model_identity_receipt_sha256"]
+        == V2_MEMBERS[0]["model_identity_receipt_sha256"]
         and ack_receipts[0]["stage"] == "terminal_acknowledged"
         and ack_receipts[0]["failure_stage"] == "session_failed"
         and ack_receipts[0]["session_failure_sha256"]
         == recov_wave["session_failure_sha256"]
         and ack_receipts[0]["failure_detail_sha256"]
         == recov_wave["session_failure"]["failure_detail_sha256"]
+        and ack_receipts[0]["acknowledgement_id"]
+        == mesh._canonical_sha256(
+            {
+                "delivery_id": "delivery-fail-recov-1",
+                "graph_receipt_sha256": recov_wave["session_failure_sha256"],
+                "request_id": fail_request_id,
+                "terminal_outcome": "session_failed",
+            }
+        )
         and recov_slot["state"] == "claimed"
         and recovered_out["graph"]["outcome"] == "session_failed",
     )
