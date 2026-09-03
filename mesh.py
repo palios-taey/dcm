@@ -1398,6 +1398,7 @@ def read_wave(session_id: str, wave_id: str) -> dict:
                RETURN properties(w) AS wave, x.status AS session_status,
                       x.active_wave_id AS active_wave_id,
                       x.last_closed_wave_id AS last_closed_wave_id,
+                      properties(x) AS session_properties,
                       slots, contributions,
                       [item IN collect(DISTINCT p) WHERE item IS NOT NULL |
                        item.contrib_id] AS parent_edges,
@@ -1439,12 +1440,85 @@ def read_wave(session_id: str, wave_id: str) -> dict:
             (dict(item) for item in rec["parent_contributions"]),
             key=lambda item: item["contrib_id"],
         )
+        session_failure = None
+        if rec["session_status"] == "failed":
+            session_props = dict(rec["session_properties"] or {})
+            record_json = session_props.get("terminal_failure_json")
+            record_sha256 = session_props.get("terminal_failure_sha256")
+            if record_json is not None and record_sha256 is not None:
+                try:
+                    record = json.loads(record_json)
+                except (TypeError, json.JSONDecodeError):
+                    record = None
+                if (
+                    isinstance(record, dict)
+                    and set(record)
+                    == {
+                        "contract",
+                        "session_id",
+                        "failure_kind",
+                        "failure_detail_sha256",
+                        "wave_id",
+                    }
+                    and record.get("contract") == _SESSION_FAILURE_CONTRACT
+                    and record.get("session_id") == session_id
+                    and record_sha256 == _canonical_sha256(record)
+                    and session_props.get("failure_kind")
+                    == record.get("failure_kind")
+                    and session_props.get("failure_detail_sha256")
+                    == record.get("failure_detail_sha256")
+                    and session_props.get("failure_wave_id")
+                    == record.get("wave_id")
+                    and session_props.get("final") is None
+                    and session_props.get("active_wave_id") is None
+                    and (
+                        record.get("wave_id") is None
+                        or session_props.get("last_closed_wave_id")
+                        == record.get("wave_id")
+                    )
+                ):
+                    raw_wave = dict(rec["wave"])
+                    if record.get("wave_id") == wave_id:
+                        if (
+                            raw_wave.get("status") == "closed"
+                            and raw_wave.get("close_outcome")
+                            == "session_failed"
+                            and raw_wave.get("session_failure_sha256")
+                            == record_sha256
+                        ):
+                            session_failure = {
+                                "contract": _SESSION_FAILURE_CONTRACT,
+                                "session_id": session_id,
+                                "failure_kind": record["failure_kind"],
+                                "failure_detail_sha256": record[
+                                    "failure_detail_sha256"
+                                ],
+                                "wave_id": record.get("wave_id"),
+                                "terminal_failure_sha256": record_sha256,
+                            }
+                    elif record.get("wave_id") is None:
+                        session_failure = {
+                            "contract": _SESSION_FAILURE_CONTRACT,
+                            "session_id": session_id,
+                            "failure_kind": record["failure_kind"],
+                            "failure_detail_sha256": record[
+                                "failure_detail_sha256"
+                            ],
+                            "wave_id": None,
+                            "terminal_failure_sha256": record_sha256,
+                        }
     wave = dict(rec["wave"])
     wave.update(
         {
             "session_status": rec["session_status"],
             "active_wave_id": rec["active_wave_id"],
             "last_closed_wave_id": rec["last_closed_wave_id"],
+            "session_failure": session_failure,
+            "session_failure_sha256": (
+                session_failure["terminal_failure_sha256"]
+                if session_failure is not None
+                else wave.get("session_failure_sha256")
+            ),
             "slots": slots,
             "contributions": contributions,
             "parent_edge_contribution_ids": parent_edges,

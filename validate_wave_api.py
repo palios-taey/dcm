@@ -10,6 +10,7 @@ import uuid
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import mesh
+import taey_adapter
 
 
 PASS = True
@@ -2156,6 +2157,237 @@ try:
     except mesh.WaveStateError as error:
         wave_bypass_rejected = error.outcome == "coordination_mode_conflict"
     check("wave cannot enter a linear-mode session", wave_bypass_rejected)
+
+    # Validate recover_wave_request against an authoritatively failed session across claimed, contributed, and pending slots
+    v2_multi_members = [
+        {
+            "seat_id": "taey-council-v2-1",
+            "role": "v2-role-1",
+            "prompt_contract_sha256": V2_PROMPT_CONTRACT_SHA256,
+            "model_identity_receipt_sha256": V2_MODEL_IDENTITY_RECEIPT_SHA256,
+        },
+        {
+            "seat_id": "taey-council-v2-2",
+            "role": "v2-role-2",
+            "prompt_contract_sha256": V2_PROMPT_CONTRACT_SHA256,
+            "model_identity_receipt_sha256": V2_MODEL_IDENTITY_RECEIPT_SHA256,
+        },
+        {
+            "seat_id": "taey-council-v2-3",
+            "role": "v2-role-3",
+            "prompt_contract_sha256": V2_PROMPT_CONTRACT_SHA256,
+            "model_identity_receipt_sha256": V2_MODEL_IDENTITY_RECEIPT_SHA256,
+        },
+    ]
+    failed_recovery_session = mesh.start_session(
+        "CLOSED SESSION RECOVERY VALIDATION", "scoped cleanup", roles=["v2-role-1", "v2-role-2", "v2-role-3"]
+    )
+    session_ids.append(failed_recovery_session)
+    failed_wave_open = mesh.open_wave(
+        failed_recovery_session,
+        round=1,
+        phase="independent",
+        prompt_id="prompt-fail-recov",
+        prompt_revision=1,
+        prompt_messages=V2_SHARED_PROMPT_MESSAGES,
+        attachment_evidence_digests=V2_SHARED_EVIDENCE_DIGESTS,
+        request_revision=1,
+        required_members=v2_multi_members,
+        request_contract=V2_REQUEST_CONTRACT,
+    )
+    # Role 1: reserve and claim (state: claimed)
+    fail_identity_1 = v2_request_identity(
+        failed_recovery_session, failed_wave_open, v2_multi_members[0]
+    )
+    fail_res_1 = mesh.reserve_wave_request(
+        failed_recovery_session,
+        failed_wave_open["wave_id"],
+        role="v2-role-1",
+        request_revision=1,
+        request_identity=fail_identity_1,
+        parent_contribution_ids=[],
+    )
+    mesh.claim_wave_request(
+        failed_recovery_session,
+        failed_wave_open["wave_id"],
+        role="v2-role-1",
+        request_revision=1,
+        request_id=fail_res_1["request_id"],
+        parent_contribution_ids=[],
+        claim_observation=v2_claim_observation(fail_identity_1),
+    )
+
+    # Role 2: reserve, claim, contribute (state: contributed)
+    fail_identity_2 = v2_request_identity(
+        failed_recovery_session, failed_wave_open, v2_multi_members[1]
+    )
+    fail_res_2 = mesh.reserve_wave_request(
+        failed_recovery_session,
+        failed_wave_open["wave_id"],
+        role="v2-role-2",
+        request_revision=1,
+        request_identity=fail_identity_2,
+        parent_contribution_ids=[],
+    )
+    mesh.claim_wave_request(
+        failed_recovery_session,
+        failed_wave_open["wave_id"],
+        role="v2-role-2",
+        request_revision=1,
+        request_id=fail_res_2["request_id"],
+        parent_contribution_ids=[],
+        claim_observation=v2_claim_observation(fail_identity_2),
+    )
+    r2_claim_obs = v2_claim_observation(fail_identity_2)
+    mesh.contribute_wave(
+        failed_recovery_session,
+        failed_wave_open["wave_id"],
+        role="v2-role-2",
+        request_revision=1,
+        request_id=fail_res_2["request_id"],
+        structured_content={"summary": "role 2 contribution"},
+        claimed_peers=[],
+        observed_execution={
+            "process_generation_observed": r2_claim_obs["process_generation_observed"],
+            "model_endpoint": r2_claim_obs["model_endpoint"],
+            "served_alias": r2_claim_obs["served_alias"],
+            "model_manifest_sha256": r2_claim_obs["model_manifest_sha256"],
+            "model_content_sha256": r2_claim_obs["model_content_sha256"],
+            "serving_container_digest": r2_claim_obs["serving_container_digest"],
+        },
+        emitter={
+            "component": "taey-council-seat",
+            "process_generation": r2_claim_obs["process_generation_observed"],
+        },
+    )
+
+    # Role 3: reserve only (state: pending)
+    fail_identity_3 = v2_request_identity(
+        failed_recovery_session, failed_wave_open, v2_multi_members[2]
+    )
+    fail_res_3 = mesh.reserve_wave_request(
+        failed_recovery_session,
+        failed_wave_open["wave_id"],
+        role="v2-role-3",
+        request_revision=1,
+        request_identity=fail_identity_3,
+        parent_contribution_ids=[],
+    )
+
+    # Fail session authoritatively
+    mesh.fail_session(
+        failed_recovery_session,
+        failure_kind="seat_inference_side_effect_uncertain",
+        failure_detail_sha256=mesh._text_sha256("timeout during inference"),
+    )
+
+    # Recover Role 1 (claimed slot)
+    acks_1 = []
+    recovered_out_1 = taey_adapter.recover_wave_request(
+        {
+            **fail_identity_1,
+            "dcm_session_id": failed_recovery_session,
+            "delivery_id": "delivery-fail-recov-1",
+            "request_id": fail_res_1["request_id"],
+            "parent_contribution_ids": [],
+        },
+        acknowledge=lambda rcpt: acks_1.append(rcpt),
+        emitter_process_generation="test-gen",
+        terminal_outcome="dead_seat",
+        inference_performed=True,  # Caller attempts to assert True, but graph proves claimed
+        failure_stage="dead_generation_recovery",
+        failure_detail="dead generation recovery test",
+    )
+
+    # Recover Role 2 (contributed slot)
+    acks_2 = []
+    recovered_out_2 = taey_adapter.recover_wave_request(
+        {
+            **fail_identity_2,
+            "dcm_session_id": failed_recovery_session,
+            "delivery_id": "delivery-fail-recov-2",
+            "request_id": fail_res_2["request_id"],
+            "parent_contribution_ids": [],
+        },
+        acknowledge=lambda rcpt: acks_2.append(rcpt),
+        emitter_process_generation="test-gen",
+        terminal_outcome="dead_seat",
+        inference_performed=False,
+        failure_stage="dead_generation_recovery",
+        failure_detail="dead generation recovery test",
+    )
+
+    # Recover Role 3 (pending slot)
+    acks_3 = []
+    recovered_out_3 = taey_adapter.recover_wave_request(
+        {
+            **fail_identity_3,
+            "dcm_session_id": failed_recovery_session,
+            "delivery_id": "delivery-fail-recov-3",
+            "request_id": fail_res_3["request_id"],
+            "parent_contribution_ids": [],
+        },
+        acknowledge=lambda rcpt: acks_3.append(rcpt),
+        emitter_process_generation="test-gen",
+        terminal_outcome="dead_seat",
+        inference_performed=True,  # Caller attempts to assert True, but graph proves pending
+        failure_stage="dead_generation_recovery",
+        failure_detail="dead generation recovery test",
+    )
+
+    recov_wave = mesh.read_wave(failed_recovery_session, failed_wave_open["wave_id"])
+    recov_slots = {s["role"]: s for s in recov_wave["slots"]}
+
+    check(
+        "claimed slot recovery yields side_effect_uncertain and leaves slot claimed without mutation",
+        len(acks_1) == 1
+        and acks_1[0]["terminal_outcome"] == "session_failed"
+        and acks_1[0]["inference_performed"] is None
+        and acks_1[0]["inference_state"] == "side_effect_uncertain"
+        and acks_1[0]["contract"] == "taey-native-dcm-receipt/v2"
+        and acks_1[0]["request_contract"] == V2_REQUEST_CONTRACT
+        and acks_1[0]["session_failure_sha256"] == recov_wave["session_failure_sha256"]
+        and acks_1[0]["acknowledgement_id"]
+        == mesh._canonical_sha256(
+            {
+                "delivery_id": "delivery-fail-recov-1",
+                "graph_receipt_sha256": recov_wave["session_failure_sha256"],
+                "request_id": fail_res_1["request_id"],
+                "terminal_outcome": "session_failed",
+            }
+        )
+        and recov_slots["v2-role-1"]["state"] == "claimed"
+        and recovered_out_1["graph"]["outcome"] == "session_failed",
+    )
+    check(
+        "contributed slot recovery returns original contribution receipt without conversion to session_failed",
+        len(acks_2) == 1
+        and acks_2[0]["terminal_outcome"] == "contributed"
+        and acks_2[0]["inference_performed"] is True
+        and acks_2[0]["contrib_id"] is not None
+        and acks_2[0]["contribution_receipt_sha256"] is not None
+        and recov_slots["v2-role-2"]["state"] == "contributed"
+        and recovered_out_2["graph"]["outcome"] == "contributed",
+    )
+    check(
+        "pending slot recovery yields not_started and leaves slot pending without mutation",
+        len(acks_3) == 1
+        and acks_3[0]["terminal_outcome"] == "session_failed"
+        and acks_3[0]["inference_performed"] is False
+        and acks_3[0]["inference_state"] == "not_started"
+        and acks_3[0]["session_failure_sha256"] == recov_wave["session_failure_sha256"]
+        and acks_3[0]["acknowledgement_id"]
+        == mesh._canonical_sha256(
+            {
+                "delivery_id": "delivery-fail-recov-3",
+                "graph_receipt_sha256": recov_wave["session_failure_sha256"],
+                "request_id": fail_res_3["request_id"],
+                "terminal_outcome": "session_failed",
+            }
+        )
+        and recov_slots["v2-role-3"]["state"] == "pending"
+        and recovered_out_3["graph"]["outcome"] == "session_failed",
+    )
 finally:
     try:
         cleanup(session_ids)

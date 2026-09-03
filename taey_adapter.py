@@ -170,11 +170,39 @@ def _transport_receipt(
     request_identity = slot["request_identity"]
     contribution_receipt = terminal.get("contribution_receipt")
     outcome_record = terminal.get("outcome_record")
-    graph_receipt_sha256 = (
-        contribution_receipt["receipt_sha256"]
-        if contribution_receipt is not None
-        else outcome_record["outcome_record_sha256"]
-    )
+    if contribution_receipt is not None:
+        graph_receipt_sha256 = contribution_receipt["receipt_sha256"]
+    elif outcome_record is not None:
+        graph_receipt_sha256 = outcome_record["outcome_record_sha256"]
+    elif (
+        wave.get("session_status") == "failed"
+        and wave.get("status") == "closed"
+        and wave.get("close_outcome") == "session_failed"
+        and terminal.get("outcome") == "session_failed"
+        and terminal.get("session_failure_sha256") is not None
+        and terminal.get("session_failure_sha256")
+        == wave.get("session_failure_sha256")
+    ):
+        graph_receipt_sha256 = wave["session_failure_sha256"]
+    else:
+        raise ValueError("terminal result lacks a valid graph receipt")
+    if terminal.get("outcome") == "session_failed":
+        if slot.get("state") not in {"pending", "claimed"}:
+            raise ValueError(
+                f"session_failed receipt is invalid for slot in state {slot.get('state')}"
+            )
+        inference_performed = False if slot.get("state") == "pending" else None
+        inference_state = (
+            "not_started"
+            if slot.get("state") == "pending"
+            else "side_effect_uncertain"
+        )
+    elif terminal.get("outcome") == "contributed":
+        inference_performed = True
+        inference_state = None
+    else:
+        inference_performed = terminal.get("inference_performed")
+        inference_state = None
     claim_observation = slot.get("claim_observation") or {}
     receipt = {
         "contract": (
@@ -242,11 +270,7 @@ def _transport_receipt(
             "duplicate_dispatch" if duplicate_dispatch else "claimed"
         ),
         "terminal_outcome": terminal["outcome"],
-        "inference_performed": (
-            True
-            if terminal["outcome"] == "contributed"
-            else terminal["inference_performed"]
-        ),
+        "inference_performed": inference_performed,
         "contrib_id": terminal.get("contrib_id"),
         "contribution_receipt_sha256": (
             contribution_receipt["receipt_sha256"]
@@ -255,14 +279,23 @@ def _transport_receipt(
         ),
         "original_request_id": slot["request_id"] if duplicate_dispatch else None,
         "failure_stage": (
-            outcome_record.get("failure_stage") if outcome_record is not None else None
+            outcome_record.get("failure_stage")
+            if outcome_record is not None
+            else "session_failed"
+            if terminal.get("outcome") == "session_failed"
+            else None
         ),
         "failure_detail_sha256": (
             outcome_record.get("failure_detail_sha256")
             if outcome_record is not None
+            else terminal.get("failure_detail_sha256")
+            if terminal.get("outcome") == "session_failed"
             else None
         ),
     }
+    if terminal.get("outcome") == "session_failed":
+        receipt["session_failure_sha256"] = terminal["session_failure_sha256"]
+        receipt["inference_state"] = inference_state
     if request_identity.get("request_contract") == "taey-native-dcm-request/v2":
         receipt.update(
             {
@@ -336,6 +369,39 @@ def recover_wave_request(
             parent_contribution_ids=parents,
             claim_observation={},
         )
+    elif (
+        wave.get("session_status") == "failed"
+        and wave.get("status") == "closed"
+        and wave.get("close_outcome") == "session_failed"
+        and slot["state"] in {"pending", "claimed"}
+        and wave.get("session_failure") is not None
+        and (wave.get("session_failure") or {}).get("terminal_failure_sha256")
+        == wave.get("session_failure_sha256")
+    ):
+        session_failure = wave["session_failure"]
+        terminal = {
+            "session_id": session_id,
+            "wave_id": wave_id,
+            "role": slot["role"],
+            "request_id": slot["request_id"],
+            "state": slot["state"],
+            "outcome": "session_failed",
+            "duplicate": True,
+            "inference_performed": (
+                False if slot["state"] == "pending" else None
+            ),
+            "inference_state": (
+                "not_started"
+                if slot["state"] == "pending"
+                else "side_effect_uncertain"
+            ),
+            "session_failure": session_failure,
+            "session_failure_sha256": session_failure["terminal_failure_sha256"],
+            "failure_stage": "session_failed",
+            "failure_detail_sha256": session_failure["failure_detail_sha256"],
+            "session_status": wave["session_status"],
+            "wave_status": wave["status"],
+        }
     else:
         terminal = mesh.record_wave_outcome(
             session_id,
