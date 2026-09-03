@@ -286,29 +286,155 @@ seat_id, role, prompt_contract_sha256, model_identity_receipt_sha256
 ```
 
 The member object is included in the immutable membership digest and copied to its graph role slot.
-`prompt_contract_sha256` names this exact canonical source object for that role:
+`prompt_contract_sha256` names the canonical digest of one exact concrete
+`taey-council-prompt-contract/v2` source object for that role:
 
 ```json
 {
-  "role": "<exact DCM role>",
-  "system_message": "<exact fully rendered per-seat system message delivered to the seat>",
-  "renderer_revision": "<immutable revision of the deterministic renderer/template>",
-  "response_contract_revision": "<immutable revision of the structured response contract>"
+  "contract": "taey-council-prompt-contract/v2",
+  "manifest": {
+    "contract": "taey-local-council-seats/v1",
+    "path": "council_seats.json",
+    "sha256": "sha256:<manifest raw-byte digest>"
+  },
+  "seat": {
+    "seat_id": "<exact manifest seat_id>",
+    "role_id": "<exact manifest role_id>",
+    "conversation_id": "<exact manifest conversation_id>"
+  },
+  "static_prompt_sources": [
+    {
+      "source_kind": "role",
+      "seat_id": "taey-council-1",
+      "role_id": "context-memory",
+      "path": "council_prompts/context-memory.md",
+      "text_sha256": "sha256:<stripped UTF-8 text digest>"
+    },
+    {
+      "source_kind": "role",
+      "seat_id": "taey-council-2",
+      "role_id": "evidence-reality",
+      "path": "council_prompts/evidence-reality.md",
+      "text_sha256": "sha256:<stripped UTF-8 text digest>"
+    },
+    {
+      "source_kind": "role",
+      "seat_id": "taey-council-3",
+      "role_id": "systems-dependencies",
+      "path": "council_prompts/systems-dependencies.md",
+      "text_sha256": "sha256:<stripped UTF-8 text digest>"
+    },
+    {
+      "source_kind": "role",
+      "seat_id": "taey-council-4",
+      "role_id": "adversarial-failure",
+      "path": "council_prompts/adversarial-failure.md",
+      "text_sha256": "sha256:<stripped UTF-8 text digest>"
+    },
+    {
+      "source_kind": "role",
+      "seat_id": "taey-council-5",
+      "role_id": "scope-intent",
+      "path": "council_prompts/scope-intent.md",
+      "text_sha256": "sha256:<stripped UTF-8 text digest>"
+    },
+    {
+      "source_kind": "role",
+      "seat_id": "taey-council-6",
+      "role_id": "options-alternatives",
+      "path": "council_prompts/options-alternatives.md",
+      "text_sha256": "sha256:<stripped UTF-8 text digest>"
+    },
+    {
+      "source_kind": "role",
+      "seat_id": "taey-council-7",
+      "role_id": "control-acceptance",
+      "path": "council_prompts/control-acceptance.md",
+      "text_sha256": "sha256:<stripped UTF-8 text digest>"
+    },
+    {
+      "source_kind": "shared",
+      "seat_id": "*",
+      "role_id": "*",
+      "path": "council_prompts/shared.md",
+      "text_sha256": "sha256:<stripped UTF-8 text digest>"
+    }
+  ],
+  "system_message": {
+    "role": "system",
+    "content": "<exact fully wrapped per-seat system message>"
+  },
+  "response_format_template": {
+    "type": "json_schema",
+    "json_schema": {
+      "name": "taey_council_contribution_v1",
+      "strict": true,
+      "schema": {
+        "type": "object",
+        "properties": {
+          "schema_version": {"type": "integer", "const": 1},
+          "seat_id": {"type": "string", "const": "<exact manifest seat_id>"},
+          "role_id": {"type": "string", "const": "<exact manifest role_id>"},
+          "status": {"type": "string", "minLength": 1},
+          "prompt_revision": {"type": "integer", "const": "<runtime-positive-integer>"},
+          "observations": {"type": "array", "items": {"type": "string", "minLength": 1}},
+          "inferences": {"type": "array", "items": {"type": "string", "minLength": 1}},
+          "unknowns": {"type": "array", "items": {"type": "string", "minLength": 1}},
+          "evidence_refs": {"type": "array", "items": {"type": "string", "minLength": 1, "enum": ["<runtime-evidence-registry>"]}},
+          "concerns": {"type": "array", "items": {"type": "string", "minLength": 1}},
+          "questions": {"type": "array", "items": {"type": "string", "minLength": 1}},
+          "recommendation": {"type": "string", "minLength": 1},
+          "confidence": {"type": "number", "minimum": 0, "maximum": 1}
+        },
+        "required": [
+          "schema_version",
+          "seat_id",
+          "role_id",
+          "status",
+          "prompt_revision",
+          "observations",
+          "inferences",
+          "unknowns",
+          "evidence_refs",
+          "concerns",
+          "questions",
+          "recommendation",
+          "confidence"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "request_renderer": {
+    "contract": "openai-chat-completions-request/v1",
+    "message_order": ["system", "user"],
+    "chat_template_kwargs": {"enable_thinking": false},
+    "attachments": {"state": "none", "items": []}
+  }
 }
 ```
 
-The `system_message` value is the complete rendered seat input, including stable seat/role identity,
-shared prompt bytes, and role prompt bytes; it does not mean the role-prompt file alone. The source is
-canonical JSON encoded as UTF-8 with sorted keys, no insignificant whitespace, Unicode preserved, and
-non-finite numbers rejected. The Presence producer owns that source object and its digest.
+The manifest digest covers the exact raw manifest bytes. The seven role sources appear in manifest
+order and the shared source is the eighth and final entry. Each text digest covers the UTF-8 encoding
+of the prompt after the producer's outer-whitespace stripping. The `system_message.content` value is
+the complete rendered seat input: the exact `[COUNCIL ROLE CONTRACT]` wrapper, immutable seat/role and
+response-contract line, stripped shared prompt, stripped role prompt, and closing wrapper. It does not
+mean the role-prompt file alone. `response_format_template` contains the producer's literal runtime
+markers; the concrete prompt revision and evidence registry belong to each separately receipted model
+request, not this static digest. The source object is canonical JSON encoded as UTF-8 with sorted keys,
+no insignificant whitespace, Unicode preserved, and non-finite numbers rejected.
+
+The producer receipt's `producer_state="self_asserted_unverified"` wrapper and
+`prompt_contract_sha256` field are outside the hashed source object. That state is not authorization.
+DCM treats the digest as opaque and does not import, reconstruct, or trust the Presence producer.
 `model_identity_receipt_sha256` names the external model-identity receipt selected for that seat. Both
 use the canonical `sha256:<64 lowercase hex>` encoding. DCM binds these opaque digests; it does not
 generate or authenticate either source object and does not claim that digest syntax or equality
-proves the producer, source contents, or serving identity. The current Presence digest producer reads
-environment-selected prompt paths and carries no independently re-derivable public commit/blob
-provenance, so it does not yet satisfy this source boundary. Production v2 selection remains blocked
-until a public Presence producer and independent verifier establish those properties for every
-manifest-derived seat.
+proves the producer, source contents, or serving identity. A reviewed public Presence producer is a
+candidate source of this object; it is not a production implementation of the v2 boundary. Production
+v2 selection remains blocked until an independent verifier reconstructs the exact prompt and model
+request, the Presence adapter enforces that verification before graph claim and inference, and a real
+production round proves the complete graph-commit-before-Redis-acknowledgement path.
 
 A v2 request identity contains exactly the v1 request-identity fields plus:
 
